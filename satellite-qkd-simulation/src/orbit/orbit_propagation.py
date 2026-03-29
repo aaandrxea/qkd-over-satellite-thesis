@@ -25,7 +25,7 @@ def generate_time_array(duration_s=600, step_s=1):
     ts = load.timescale()
 
     t = ts.utc(
-        2024, 1, 1,
+        2021, 10, 2,
         0, 0,
         np.arange(0, duration_s, step_s)
     )
