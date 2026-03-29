@@ -1,0 +1,8 @@
+tau_0: 0.1
+model: "beer-lambert"
+
+turbulence:
+  enabled: true
+  model: "hufnagel-valley"
+  wind_speed: 21.0
+  cn2_ground: 1.7e-14

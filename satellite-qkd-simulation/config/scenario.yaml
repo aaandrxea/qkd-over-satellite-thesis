@@ -1,0 +1,10 @@
+wavelength: 800e-9
+tx_diameter: 0.1
+rx_diameter: 0.5
+
+eta_tx: 0.8
+eta_rx: 0.7
+eta_misc: 0.9
+
+mu: 0.5
+e_opt: 0.02
