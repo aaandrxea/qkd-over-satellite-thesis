@@ -1,8 +1,9 @@
-tau_0: 0.1
-model: "beer-lambert"
-
 turbulence:
   enabled: true
-  model: "hufnagel-valley"
+
+  profile: "hufnagel-valley"   # <-- Cn²
+  model: "lognormal"           # <-- fading
+
   wind_speed: 21.0
   cn2_ground: 1.7e-14
+  n_steps: 200

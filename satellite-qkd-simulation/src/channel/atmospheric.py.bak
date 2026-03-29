@@ -101,7 +101,7 @@ def integral_transmittance(
 
         alpha = alpha_0 * rho
 
-        integral = np.trapezoid(alpha, s)
+        integral = np.trapz(alpha, s)
 
         results[i] = np.exp(-integral)
 
