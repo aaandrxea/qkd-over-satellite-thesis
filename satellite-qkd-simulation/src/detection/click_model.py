@@ -1,11 +1,6 @@
 import numpy as np
-
 def total_click_probability(p_sig, p_dark):
-    """
-    p_click ≈ p_sig + p_dark
-    """
-    return p_sig + p_dark
-
+    return p_sig + p_dark - p_sig * p_dark
 
 def error_probability(p_sig, p_dark, e_opt):
     """
