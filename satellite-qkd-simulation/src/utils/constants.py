@@ -1,5 +1,9 @@
 import numpy as np
+# ================================
+# GEOMETRIA TERRESTRE
+# ================================
 
+R_EARTH = 6371e3  # raggio terrestre [m]
 # ================================
 # COSTANTI FISICHE
 # ================================

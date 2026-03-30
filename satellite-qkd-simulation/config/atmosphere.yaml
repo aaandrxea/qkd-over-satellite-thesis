@@ -1,9 +1,24 @@
-turbulence:
-  enabled: true
+model: "physical"
 
-  profile: "hufnagel-valley"   # <-- Cn²
-  model: "lognormal"           # <-- fading
+wavelength: 800e-9
 
-  wind_speed: 21.0
-  cn2_ground: 1.7e-14
-  n_steps: 200
+# Rayleigh (scattering molecolare)
+alpha_mol_0: 1e-5
+lambda_ref: 800e-9
+
+# Aerosol (dominante vicino al suolo)
+alpha_aer_0: 5e-5
+H_aer: 1200.0
+
+# integrazione
+n_steps: 300
+
+lambda_ref: 800e-9
+
+angstrom_exponent: 1.3
+H_aer: 1200
+
+humidity: 0.5
+alpha_rayleigh_0: 5e-5
+alpha_aer_0: 3e-4
+alpha_humidity_0: 5e-5alpha_ozone_0: 5e-6

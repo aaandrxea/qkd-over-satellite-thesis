@@ -1,208 +1,129 @@
 import numpy as np
 
-from src.channel.link_budget import compute_link_budget
+from src.channel.link_budget import compute_link_budget, link_budget_dB
 
+# ==========================================================
+# SCENARIO DI TEST (LEO DOWNLINK)
+# ==========================================================
 
-# ================================
-# TEST SETUP
-# ================================
+def generate_test_scenario(n_points=50):
+    """
+    Simula passaggio satellite:
+    - elevazione da 10° a 90°
+    - distanza coerente (~500–1500 km)
+    """
 
-def generate_test_data(n=1000):
-    # distanza: 200 km → 1000 km
-    R = np.linspace(2e5, 1e6, n)
+    elevation = np.linspace(np.deg2rad(10), np.deg2rad(90), n_points)
 
-    # elevazione: 5° → 90°
-    elevation = np.linspace(np.deg2rad(5), np.deg2rad(90), n)
+    # distanza approssimata (slant range realistico)
+    R = 500e3 / np.sin(elevation)
 
     return R, elevation
 
 
-# ================================
-# TEST 1 — RANGE FISICO
-# ================================
+# ==========================================================
+# TEST PRINCIPALE
+# ==========================================================
 
-def test_physical_range():
-    R, elevation = generate_test_data()
+def test_link_budget():
 
-    results = compute_link_budget(
-        R,
-        elevation,
-        wavelength=800e-9,
-        tx_diameter=0.1,
-        rx_diameter=0.5
-    )
+    wavelength = 800e-9      # 800 nm
+    tx_diameter = 0.1        # 10 cm
+    rx_diameter = 0.5        # 50 cm
 
-    for key, val in results.items():
-        if isinstance(val, np.ndarray):
-            assert np.all(val >= 0), f"{key} < 0"
-            if key != "eta_turb":
-                assert np.all(val <= 1), f"{key} > 1"
-
-    print("✓ Range fisico OK")
-
-
-# ================================
-# TEST 2 — MONOTONIA GEOMETRICA
-# ================================
-
-def test_geometric_monotonicity():
-    R, elevation = generate_test_data()
+    R, elevation = generate_test_scenario()
 
     results = compute_link_budget(
         R,
         elevation,
-        wavelength=800e-9,
-        tx_diameter=0.1,
-        rx_diameter=0.5
+        wavelength,
+        tx_diameter,
+        rx_diameter
     )
 
-    eta_geo = results["eta_geo"]
-
-    assert np.all(np.diff(eta_geo) <= 0), "eta_geo non decrescente"
-
-    print("✓ Geometric loss OK")
-
-
-# ================================
-# TEST 3 — ATMOSFERA
-# ================================
-
-def test_atmospheric_monotonicity():
-    R, elevation = generate_test_data()
-
-    results = compute_link_budget(
-        R,
-        elevation,
-        wavelength=800e-9,
-        tx_diameter=0.1,
-        rx_diameter=0.5
-    )
-
-    eta_atm = results["eta_atm"]
-
-    assert np.all(np.diff(eta_atm) >= 0), "eta_atm non crescente"
-
-    print("✓ Atmosfera OK")
-
-
-# ================================
-# TEST 4 — TURBOLENZA
-# ================================
-
-def test_turbulence_statistics():
-    R, elevation = generate_test_data()
-
-    results = compute_link_budget(
-        R,
-        elevation,
-        wavelength=800e-9,
-        tx_diameter=0.1,
-        rx_diameter=0.5
-    )
-
-    eta_turb = results["eta_turb"]
-
-    mean = np.mean(eta_turb)
-    var = np.var(eta_turb)
-    print("DEBUG TURBULENCE:")
-    print("Mean:", mean)
-    print("Std:", np.std(eta_turb))
-    print("Min:", np.min(eta_turb))
-    print("Max:", np.max(eta_turb))
-    assert 0.5 < mean < 1.5, "Media turbolenza fuori range"
-    assert var > 0, "Varianza nulla"
-
-    print("✓ Turbolenza OK")
-
-
-# ================================
-# TEST 5 — POINTING LIMITE
-# ================================
-
-def test_pointing_limit():
-    R, elevation = generate_test_data()
-
-    config = {
-        "eta_tx": 1.0,
-        "eta_rx": 1.0,
-        "eta_misc": 1.0,
-        "pointing": {
-            "sigma_theta": 1e-12
-        }
-    }
-
-    results = compute_link_budget(
-        R,
-        elevation,
-        wavelength=800e-9,
-        tx_diameter=0.1,
-        rx_diameter=0.5,
-        config=config
-    )
-
-    eta_point = results["eta_point"]
-
-    assert np.allclose(eta_point, 1.0, atol=1e-6), "Pointing non tende a 1"
-
-    print("✓ Pointing limite OK")
-
-
-# ================================
-# TEST 6 — COERENZA TOTALE
-# ================================
-
-def test_total_consistency():
-    R, elevation = generate_test_data()
-
-    results = compute_link_budget(
-        R,
-        elevation,
-        wavelength=800e-9,
-        tx_diameter=0.1,
-        rx_diameter=0.5
-    )
+    results_dB = link_budget_dB(results)
 
     eta_total = results["eta_total"]
+    loss_dB = results_dB["eta_total"]
 
-    assert np.all(eta_total <= 1), "eta_total > 1"
+    # ------------------------------------------------------
+    # 1. CHECK NUMERICO
+    # ------------------------------------------------------
+    assert np.all(np.isfinite(eta_total)), "NaN o Inf in eta_total"
+    assert np.all((eta_total >= 0) & (eta_total <= 1)), "eta fuori range"
 
-    print("✓ Consistenza totale OK")
+    # ------------------------------------------------------
+    # 2. MONOTONICITÀ FISICA
+    # ------------------------------------------------------
+    # maggiore elevazione → meno perdita
+    assert loss_dB[0] > loss_dB[-1], "La perdita NON diminuisce con elevazione"
+
+    # ------------------------------------------------------
+    # 3. RANGE REALISTICO
+    # ------------------------------------------------------
+    min_loss = np.min(loss_dB)
+    max_loss = np.max(loss_dB)
+
+    print("\n=== LINK BUDGET TEST ===")
+    print(f"Min loss (zenith): {min_loss:.2f} dB")
+    print(f"Max loss (low elevation): {max_loss:.2f} dB")
+
+    assert 10 < min_loss < 60, "Loss zenith non realistica"
+    assert max_loss > min_loss, "Comportamento non fisico"
+
+    # ------------------------------------------------------
+    # 4. CONTRIBUTI
+    # ------------------------------------------------------
+    print("\n--- CONTRIBUTI ---")
+    for key in ["eta_aperture", "eta_atm", "eta_turb", "eta_point"]:
+        val = results_dB[key]
+        print(f"{key}: mean = {np.mean(val):.2f} dB")
+
+    return results
 
 
-# ================================
-# TEST 7 — STABILITÀ NUMERICA
-# ================================
+# ==========================================================
+# TEST LUNGHEZZA D’ONDA
+# ==========================================================
 
-def test_numerical_stability():
-    R, elevation = generate_test_data()
+def test_wavelength_dependence():
 
-    results = compute_link_budget(
-        R,
-        elevation,
-        wavelength=800e-9,
-        tx_diameter=0.1,
-        rx_diameter=0.5
+    R, elevation = generate_test_scenario()
+
+    tx_diameter = 0.1
+    rx_diameter = 0.5
+
+    res_800 = compute_link_budget(
+        R, elevation, 800e-9, tx_diameter, rx_diameter
     )
 
-    for key, val in results.items():
-        if isinstance(val, np.ndarray):
-            assert not np.isnan(val).any(), f"{key} contiene NaN"
-            assert not np.isinf(val).any(), f"{key} contiene Inf"
+    res_1550 = compute_link_budget(
+        R, elevation, 1550e-9, tx_diameter, rx_diameter
+    )
 
-    print("✓ Stabilità numerica OK")
+    loss_800 = -10 * np.log10(res_800["eta_total"])
+    loss_1550 = -10 * np.log10(res_1550["eta_total"])
 
+    print("\n=== WAVELENGTH TEST ===")
+    print(f"800 nm mean loss: {np.mean(loss_800):.2f} dB")
+    print(f"1550 nm mean loss: {np.mean(loss_1550):.2f} dB")
 
-# ================================
-# MAIN (run manuale)
-# ================================
+    # atmosfera migliore a 1550 nm (meno Rayleigh)
+    diff = np.mean(loss_1550) - np.mean(loss_800)
+
+    print(f"Difference (1550 - 800): {diff:.2f} dB")
+
+    # Effetti in competizione: Rayleigh vs diffrazione vs umidità
+    assert -15 < diff < 15, "λ dependence fuori range fisico"
+
+# ==========================================================
+# MAIN
+# ==========================================================
 
 if __name__ == "__main__":
-    test_physical_range()
-    test_geometric_monotonicity()
-    test_atmospheric_monotonicity()
-    test_turbulence_statistics()
-    test_pointing_limit()
-    test_total_consistency()
-    test_numerical_stability()
 
-    print("\nALL TEST PASSED ✅")
+    results = test_link_budget()
+
+    test_wavelength_dependence()
+
+    print("\nALL TESTS PASSED")

@@ -1,68 +1,56 @@
 import numpy as np
 
-from src.utils.constants import PI, EPS
+from src.utils.constants import EPS
 from src.utils.io import load_yaml
 
 from src.channel.atmospheric import atmospheric_transmittance
 from src.channel.turbulence import turbulence_fading
-from src.channel.pointing import pointing_fading, beam_divergence
+from src.channel.pointing import beam_waist, beam_radius, pointing_fading
 
 
-# ================================
+# ==========================================================
 # CONFIG
-# ================================
+# ==========================================================
 
 def load_channel_config(config_path: str = "config/scenario.yaml") -> dict:
     return load_yaml(config_path)
 
 
-# ================================
-# BEAM RADIUS
-# ================================
+# ==========================================================
+# APERTURE COUPLING (Gaussian beam)
+# ==========================================================
 
-def beam_radius(
-    R: np.ndarray,
-    divergence: float
-) -> np.ndarray:
-    """
-    w(R) = R * theta_div
-    """
-    return R * divergence
-
-
-# ================================
-# PERDITE GEOMETRICHE (GAUSSIANO)
-# ================================
-
-def geometric_loss(
+def aperture_coupling(
     R: np.ndarray,
     wavelength: float,
     tx_diameter: float,
     rx_diameter: float
 ) -> np.ndarray:
     """
-    Coupling gaussiano realistico:
+    Fraction of power collected by receiver aperture.
 
-    eta_geo = 1 - exp( -2 * (a^2 / w^2) )
+    η = 1 - exp(-2 a^2 / w^2)
 
-    dove:
-    a = raggio ricevitore
-    w = raggio fascio
+    where:
+    a = receiver radius
+    w = beam radius at distance R
     """
 
-    theta_div = beam_divergence(wavelength, tx_diameter)
-    w_R = beam_radius(R, theta_div)
+    R = np.asarray(R)
+
+    w0 = beam_waist(tx_diameter)
+    w = beam_radius(wavelength, w0, R)
 
     a = rx_diameter / 2.0
 
-    eta = 1.0 - np.exp(-2.0 * (a*2) / (w_R*2 + EPS))
+    eta = 1.0 - np.exp(-2.0 * (a**2) / (w**2 + EPS))
 
     return np.clip(eta, 0.0, 1.0)
 
 
-# ================================
-# EFFICIENZA OTTICA
-# ================================
+# ==========================================================
+# SYSTEM EFFICIENCY
+# ==========================================================
 
 def optical_efficiency(
     eta_tx: float,
@@ -72,9 +60,9 @@ def optical_efficiency(
     return eta_tx * eta_rx * eta_misc
 
 
-# ================================
-# LINK BUDGET COMPLETO
-# ================================
+# ==========================================================
+# MAIN LINK BUDGET
+# ==========================================================
 
 def compute_link_budget(
     R: np.ndarray,
@@ -85,33 +73,27 @@ def compute_link_budget(
     config: dict | None = None
 ) -> dict:
     """
-    Calcolo completo del link budget.
+    Full physical link budget for free-space QKD.
 
     Returns
     -------
-    dict:
-        eta_geo
-        eta_atm
-        eta_turb
-        eta_point
-        eta_sys
-        eta_total
+    dict with all channel efficiencies
     """
 
     if config is None:
         config = load_channel_config()
 
     # ----------------------------
-    # Parametri sistema
+    # System parameters
     # ----------------------------
     eta_tx = config.get("eta_tx", 1.0)
     eta_rx = config.get("eta_rx", 1.0)
     eta_misc = config.get("eta_misc", 1.0)
 
     # ----------------------------
-    # Geometria
+    # Aperture coupling
     # ----------------------------
-    eta_geo = geometric_loss(
+    eta_aperture = aperture_coupling(
         R,
         wavelength,
         tx_diameter,
@@ -119,34 +101,36 @@ def compute_link_budget(
     )
 
     # ----------------------------
-    # Atmosfera (deterministica)
+    # Atmospheric loss
     # ----------------------------
     eta_atm = atmospheric_transmittance(
         elevation,
-        R
+        R,
+        config=config.get("atmosphere", None)
     )
 
     # ----------------------------
-    # Turbolenza (stocastica)
+    # Turbulence
     # ----------------------------
-    eta_turb = turbulence_fading(
+    eta_turb, sigma_R2 = turbulence_fading(
         elevation,
         R,
-        wavelength
+        wavelength,
+        **config.get("turbulence", {})
     )
 
     # ----------------------------
-    # Pointing (stocastico)
+    # Pointing
     # ----------------------------
     eta_point = pointing_fading(
         R,
         wavelength,
         tx_diameter,
-        config = config.get("pointing", )
-)
+        config=config.get("pointing", {})
+    )
 
     # ----------------------------
-    # Efficienza sistema
+    # System efficiency
     # ----------------------------
     eta_sys = optical_efficiency(
         eta_tx,
@@ -155,12 +139,11 @@ def compute_link_budget(
     )
 
     # ----------------------------
-    # Trasmissione totale
+    # TOTAL CHANNEL
     # ----------------------------
     eta_total = (
-        eta_geo *
+        eta_aperture *
         eta_atm *
-        eta_turb *
         eta_point *
         eta_sys
     )
@@ -168,18 +151,19 @@ def compute_link_budget(
     eta_total = np.clip(eta_total, 0.0, 1.0)
 
     return {
-        "eta_geo": eta_geo,
+        "eta_aperture": eta_aperture,
         "eta_atm": eta_atm,
         "eta_turb": eta_turb,
+        "sigma_R2": sigma_R2,
         "eta_point": eta_point,
         "eta_sys": eta_sys,
         "eta_total": eta_total
     }
 
 
-# ================================
-# VERSIONE dB
-# ================================
+# ==========================================================
+# dB SCALE
+# ==========================================================
 
 def to_dB(x: np.ndarray) -> np.ndarray:
     x = np.clip(x, 1e-15, None)
@@ -187,4 +171,4 @@ def to_dB(x: np.ndarray) -> np.ndarray:
 
 
 def link_budget_dB(results: dict) -> dict:
-    return {k: to_dB(v) for k, v in results.items()}
+    return {k: to_dB(v) for k, v in results.items() if isinstance(v, np.ndarray)}

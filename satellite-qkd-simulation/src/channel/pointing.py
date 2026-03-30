@@ -4,110 +4,112 @@ from src.utils.constants import PI, EPS
 from src.utils.io import load_yaml
 
 
-# ================================
+# ==========================================================
 # CONFIG
-# ================================
+# ==========================================================
 
 def load_pointing_config(config_path: str = "config/scenario.yaml") -> dict:
     cfg = load_yaml(config_path)
     return cfg.get("pointing", {})
 
 
-# ================================
-# BEAM DIVERGENCE
-# ================================
+# ==========================================================
+# BEAM PROPAGATION (Gaussian beam)
+# ==========================================================
 
-def beam_divergence(
-    wavelength: float,
-    tx_diameter: float
-) -> float:
+def beam_waist(tx_diameter: float) -> float:
     """
-    Divergenza limitata da diffrazione:
+    Waist at transmitter (approximation).
 
-    theta ≈ lambda / (pi * w0), con w0 ≈ D/2
+    w0 ≈ D / 2
     """
-    w0 = tx_diameter / 2.0
-    return wavelength / (PI * w0)
+    return tx_diameter / 2.0
 
 
-# ================================
-# JITTER ANGOLARE (GAUSSIANO)
-# ================================
-
-def pointing_jitter(
-    n_samples: int,
-    sigma_theta: float
-) -> np.ndarray:
+def beam_radius(wavelength: float, w0: float, z: np.ndarray) -> np.ndarray:
     """
-    Genera errore angolare gaussiano (rad)
+    Gaussian beam radius:
 
-    theta_err ~ N(0, sigma_theta^2)
+    w(z) = w0 * sqrt(1 + (z / z_R)^2)
+
+    where:
+    z_R = π w0^2 / λ
     """
-    return np.random.normal(loc=0.0, scale=sigma_theta, size=n_samples)
+
+    z_R = PI * w0**2 / wavelength
+
+    return w0 * np.sqrt(1 + (z / z_R)**2)
 
 
-# ================================
-# OFFSET RADIALE
-# ================================
+# ==========================================================
+# POINTING ERROR (2D MODEL)
+# ==========================================================
 
-def radial_offset(
-    theta_error: np.ndarray,
-    R: np.ndarray
-) -> np.ndarray:
-    """
-    r = R * theta_err
-    """
-    return R * theta_error
-
-
-# ================================
-# SPOT SIZE
-# ================================
-
-def beam_radius(
+def pointing_offset(
     R: np.ndarray,
-    divergence: float
-) -> np.ndarray:
+    sigma_theta: float,
+    size=None
+):
     """
-    w(R) = R * theta_div
+    Generates radial pointing offset.
+
+    Angular jitter → 2D Gaussian → radial Rayleigh
+
+    r = R * θ
+
+    Returns
+    -------
+    r : radial offset [m]
     """
-    return R * divergence
+
+    if sigma_theta < 1e-12:
+        return np.zeros_like(R)
+
+    # 2D Gaussian components
+    theta_x = np.random.normal(0, sigma_theta, size=len(R))
+    theta_y = np.random.normal(0, sigma_theta, size=len(R))
+
+    theta = np.sqrt(theta_x**2 + theta_y**2)
+
+    return R * theta
 
 
-# ================================
-# COUPLING GAUSSIANO
-# ================================
+# ==========================================================
+# COUPLING EFFICIENCY
+# ==========================================================
 
-def pointing_loss(theta_error, divergence):
-    theta_error = np.asarray(theta_error)
+def pointing_loss(
+    r: np.ndarray,
+    w: np.ndarray
+):
+    """
+    Gaussian beam coupling:
 
-    # Protezione numerica forte
-    divergence = np.maximum(divergence, 1e-12)
+    η = exp(-2 r^2 / w^2)
+    """
 
-    ratio = (theta_error / divergence)**2
+    w = np.maximum(w, EPS)
 
-    eta = np.exp(-2.0 * ratio)
+    return np.exp(-2.0 * (r**2) / (w**2))
 
-    # Clipping fisico
-    eta = np.clip(eta, 0.0, 1.0)
 
-    return eta
-# ================================
-# MODELLO COMPLETO
-# ================================
+# ==========================================================
+# MAIN INTERFACE
+# ==========================================================
 
 def pointing_fading(
     R: np.ndarray,
     wavelength: float,
     tx_diameter: float,
     config: dict | None = None
-) -> np.ndarray:
+):
     """
-    Modello completo di pointing:
+    Full pointing loss model.
 
-    1. calcola divergenza
-    2. genera jitter
-    3. calcola perdita
+    Includes:
+    - diffraction-limited beam propagation
+    - 2D jitter
+    - Gaussian coupling
 
     Returns
     -------
@@ -117,23 +119,29 @@ def pointing_fading(
     if config is None:
         config = load_pointing_config()
 
-    sigma_theta = config.get("sigma_theta", 1e-6)  # rad
+    sigma_theta = float(config.get("sigma_theta", 1e-6))
+    static_offset = float(config.get("static_offset", 0.0))
+    R = np.asarray(R)
 
     # ----------------------------
-    # Divergenza fascio
+    # Beam propagation
     # ----------------------------
-    theta_div = beam_divergence(wavelength, tx_diameter)
+    w0 = beam_waist(tx_diameter)
+    w = beam_radius(wavelength, w0, R)
 
     # ----------------------------
-    # Jitter
+    # Pointing offset
     # ----------------------------
-    if sigma_theta < 1e-10:
-        theta_err = np.zeros_like(R)
-    else:
-        theta_err = pointing_jitter(len(R),sigma_theta)    
-    # ----------------------------
-    # Perdita
-    # ----------------------------
-    eta_point = pointing_loss(theta_err, theta_div)
+    r_jitter = pointing_offset(R, sigma_theta)
 
-    return eta_point
+    # static misalignment (converted to meters)
+    r_static = R * static_offset
+
+    r_total = np.sqrt(r_jitter**2 + r_static**2)
+
+    # ----------------------------
+    # Coupling
+    # ----------------------------
+    eta = pointing_loss(r_total, w)
+
+    return np.clip(eta, 0.0, 1.0)
