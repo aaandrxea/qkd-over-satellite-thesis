@@ -123,12 +123,12 @@ def compute_link_budget(
     # Pointing
     # ----------------------------
     eta_point = pointing_fading(
-        R,
-        wavelength,
-        tx_diameter,
-        config=config.get("pointing", {})
+    R,
+    wavelength,
+    elevation,
+    tx_diameter,
+    config=config.get("pointing", {})
     )
-
     # ----------------------------
     # System efficiency
     # ----------------------------

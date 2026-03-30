@@ -167,34 +167,68 @@ def turbulence_fading(
         )
 
         sigma_R2[i] = sigma
-# ----------------------------
-# Regime selection
-# ----------------------------
-    if model == "auto":
-        if sigma < 0.3:
+
+        if model == "auto":
+            if sigma < 0.3:
+                val = lognormal_sample(sigma, size=size)
+            else:
+                alpha, beta = gamma_gamma_parameters(sigma)
+                val = gamma_gamma_sample(alpha, beta, size=size)
+
+        elif model == "lognormal":
             val = lognormal_sample(sigma, size=size)
-        else:
+
+        elif model == "gamma-gamma":
             alpha, beta = gamma_gamma_parameters(sigma)
             val = gamma_gamma_sample(alpha, beta, size=size)
 
-    elif model == "lognormal":
-        val = lognormal_sample(sigma, size=size)
+        else:
+            raise ValueError(f"Unknown model: {model}")
 
-    elif model == "gamma-gamma":
-        alpha, beta = gamma_gamma_parameters(sigma)
-        val = gamma_gamma_sample(alpha, beta, size=size)
+        if size is not None:
+            val = np.mean(val)
 
-    else:
-        raise ValueError(f"Unknown model: {model}")
+        eta[i] = np.clip(val, 0.0, None)
 
-# ----------------------------
-# Deterministic reduction (optional)
-# ----------------------------
-    if size is not None:
-        val = np.mean(val)
-
-# ----------------------------
-# Physical clipping
-# ----------------------------
-    eta[i] = np.clip(val, 0.0, 1.0)
     return eta, sigma_R2
+
+def beam_wander_std(wavelength, distance, elevation, Cn2_0=1e-14):
+    """
+    Beam wander standard deviation [rad].
+
+    Simplified Kolmogorov turbulence model with slant-path correction.
+
+    Parameters
+    ----------
+    wavelength : [m]
+    distance : [m]
+    elevation : [rad]
+    Cn2_0 : ground-level turbulence strength
+
+    Returns
+    -------
+    sigma_bw : [rad]
+    """
+
+    import numpy as np
+
+    wavelength = float(wavelength)
+    distance = np.asarray(distance)
+    elevation = np.asarray(elevation)
+
+    k = 2 * np.pi / wavelength
+
+    # evita divergenze a bassa elevazione
+    sin_el = np.sin(elevation)
+    sin_el = np.clip(sin_el, 1e-3, None)
+
+    # slant path scaling
+    sec_theta = 1.0 / sin_el
+
+    # effective turbulence
+    Cn2_eff = Cn2_0 * sec_theta
+
+    # beam wander variance scaling
+    sigma_bw = np.sqrt(2.91 * k**2 * Cn2_eff * distance**3)
+
+    return sigma_bw

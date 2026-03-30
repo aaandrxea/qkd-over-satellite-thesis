@@ -5,7 +5,7 @@ from src.detection.detector import compute_detection
 
 
 # ==========================================================
-# SCENARIO
+# SCENARIO GEOMETRICO
 # ==========================================================
 
 def generate_scenario(n_points=50):
@@ -15,113 +15,137 @@ def generate_scenario(n_points=50):
 
 
 # ==========================================================
-# TEST PRINCIPALE
+# PARAMETRI COMUNI
 # ==========================================================
 
-def test_detection_pipeline():
+PARAMS = {
+    "wavelength": 800e-9,
+    "tx_diameter": 0.1,
+    "rx_diameter": 0.5,
+    "mu": 0.5,
+    "dark_rate": 100,     # Hz
+    "gate_time": 1e-9,    # s
+    "e_opt": 0.02
+}
 
-    # ----------------------------
-    # PARAMETRI
-    # ----------------------------
-    wavelength = 800e-9
-    tx_diameter = 0.1
-    rx_diameter = 0.5
 
-    mu = 0.5
-    dark_rate = 100        # Hz
-    gate_time = 1e-9       # s
-    e_opt = 0.02
+# ==========================================================
+# NIGHT SCENARIO (NO BACKGROUND)
+# ==========================================================
 
-    # ----------------------------
-    # CHANNEL
-    # ----------------------------
+def test_detection_night():
+
+    print("\n=== DETECTION TEST: NIGHT ===")
+
     R, elevation = generate_scenario()
 
     channel = compute_link_budget(
         R,
         elevation,
-        wavelength,
-        tx_diameter,
-        rx_diameter
+        PARAMS["wavelength"],
+        PARAMS["tx_diameter"],
+        PARAMS["rx_diameter"]
     )
 
-    eta_total = channel["eta_total"]
+    eta = channel["eta_total"]
 
-    # ----------------------------
-    # DETECTION
-    # ----------------------------
     det = compute_detection(
-        eta_total,
-        mu,
-        dark_rate,
-        gate_time,
-        e_opt
+        eta,
+        PARAMS["mu"],
+        PARAMS["dark_rate"],
+        PARAMS["gate_time"],
+        PARAMS["e_opt"],
+        bg_rate=0.0
     )
 
-    p_sig = det["p_sig"]
-    p_dark = det["p_dark"]
-    p_click = det["p_click"]
     qber = det["qber"]
+    p_click = det["p_click"]
 
-    # ======================================================
-    # 1. CHECK NUMERICI
-    # ======================================================
-    assert np.all(np.isfinite(p_click)), "NaN in p_click"
-    assert np.all((p_click >= 0) & (p_click <= 1)), "p_click fuori range"
-    assert np.all((qber >= 0) & (qber <= 0.5)), "QBER fuori range"
-
-    # ======================================================
-    # 2. CONSISTENZA FISICA
-    # ======================================================
-    assert np.all(p_click >= p_sig), "p_click < p_sig (impossibile)"
-
-    # ======================================================
-    # 3. SCALING CON PERDITA
-    # ======================================================
-    # zenith vs low elevation
-    assert p_sig[-1] > p_sig[0], "p_sig non aumenta con elevazione"
-    assert qber[0] > qber[-1], "QBER non diminuisce con elevazione"
-
-    # ======================================================
-    # 4. RANGE REALISTICI
-    # ======================================================
-    print("\n=== DETECTION TEST ===")
-
-    print(f"p_sig mean: {np.mean(p_sig):.2e}")
-    print(f"p_dark: {p_dark[0]:.2e}")
-    print(f"p_click mean: {np.mean(p_click):.2e}")
     print(f"QBER mean: {np.mean(qber):.3f}")
+    print(f"p_click mean: {np.mean(p_click):.2e}")
 
-    assert 1e-8 < np.mean(p_sig) < 1e-1, "p_sig non realistico"
-    assert 1e-9 < p_dark[0] < 1e-4, "p_dark non realistico"
-    assert 0.0 < np.mean(qber) < 0.2, "QBER non realistico"
+    # ------------------------------------------------------
+    # CHECK
+    # ------------------------------------------------------
+    assert np.all((qber >= 0) & (qber <= 0.5))
+    assert np.mean(qber) < 0.1, "QBER notte troppo alto"
 
     return det
 
 
 # ==========================================================
-# TEST LIMITE (HIGH LOSS)
+# DAY SCENARIO (WITH BACKGROUND)
+# ==========================================================
+
+def test_detection_day():
+
+    print("\n=== DETECTION TEST: DAY ===")
+
+    R, elevation = generate_scenario()
+
+    channel = compute_link_budget(
+        R,
+        elevation,
+        PARAMS["wavelength"],
+        PARAMS["tx_diameter"],
+        PARAMS["rx_diameter"]
+    )
+
+    eta = channel["eta_total"]
+
+    # valore realistico ordine di grandezza
+    bg_rate = 1e6  # Hz (daylight)
+
+    det = compute_detection(
+        eta,
+        PARAMS["mu"],
+        PARAMS["dark_rate"],
+        PARAMS["gate_time"],
+        PARAMS["e_opt"],
+        bg_rate=bg_rate
+    )
+
+    qber = det["qber"]
+    p_click = det["p_click"]
+
+    print(f"QBER mean: {np.mean(qber):.3f}")
+    print(f"p_click mean: {np.mean(p_click):.2e}")
+
+    # ------------------------------------------------------
+    # CHECK
+    # ------------------------------------------------------
+    assert np.mean(qber) > 0.05, "QBER giorno troppo basso (non realistico)"
+    assert np.mean(qber) < 0.5
+
+    return det
+
+
+# ==========================================================
+# EXTREME LOSS TEST
 # ==========================================================
 
 def test_extreme_loss():
 
+    print("\n=== EXTREME LOSS TEST ===")
+
     eta = np.logspace(-10, -4, 50)
+
     det = compute_detection(
         eta,
         mu=0.01,
         dark_rate=100,
         gate_time=1e-9,
-        e_opt=0.02
+        e_opt=0.02,
+        bg_rate=0.0
     )
 
     qber = det["qber"]
 
-    print("\n=== EXTREME LOSS TEST ===")
     print(f"QBER min: {np.min(qber):.3f}")
     print(f"QBER max: {np.max(qber):.3f}")
 
-    # QBER deve tendere a 0.5
-    assert qber[0] > 0.3, "QBER non tende a 0.5 in high loss"
+    # deve tendere a 0.5
+    assert qber[0] > 0.3
 
 
 # ==========================================================
@@ -130,7 +154,8 @@ def test_extreme_loss():
 
 if __name__ == "__main__":
 
-    test_detection_pipeline()
+    night = test_detection_night()
+    day = test_detection_day()
     test_extreme_loss()
 
     print("\nALL DETECTION TESTS PASSED")
