@@ -2,84 +2,94 @@ import numpy as np
 
 
 # ================================
-# POISSON DISTRIBUTION
+# Utility
 # ================================
 
-def poisson_prob(n, mu):
-    return np.exp(-mu) * mu**n / np.math.factorial(n)
-
-
-# ================================
-# YIELD ESTIMATION
-# ================================
-
-def estimate_y1(Q_mu, Q_nu, mu, nu):
-    """
-    Lower bound on single-photon yield (simplified)
-    """
-
-    return (mu * Q_nu * np.exp(nu) - nu * Q_mu * np.exp(mu)) / (mu * nu * (mu - nu))
-
-
-def estimate_e1(E_mu, Q_mu, Y1, mu):
-    """
-    Upper bound on single-photon error
-    """
-
-    return (E_mu * Q_mu) / (mu * np.exp(-mu) * Y1)
+def binary_entropy(x):
+    x = np.clip(x, 1e-12, 1 - 1e-12)
+    return -x * np.log2(x) - (1 - x) * np.log2(1 - x)
 
 
 # ================================
-# DECOY KEY RATE
+# Lo–Ma–Chen bounds
 # ================================
 
-def binary_entropy(p):
-    p = np.clip(p, 1e-12, 1 - 1e-12)
-    return -p * np.log2(p) - (1 - p) * np.log2(1 - p)
-
-
-def decoy_key_rate(Q_mu, E_mu, Y1, e1, f_ec=1.16, q=0.5):
+def estimate_Y1_lower(mu, nu, Q_mu, Q_nu):
     """
-    Decoy-state key rate
+    Lower bound on single-photon yield Y1
     """
-
-    return q * (
-        - Q_mu * f_ec * binary_entropy(E_mu)
-        + Y1 * (1 - binary_entropy(e1))
+    numerator = (
+        Q_nu * np.exp(nu)
+        - (nu*2 / mu*2) * Q_mu * np.exp(mu)
     )
 
+    denominator = mu * nu - nu**2
+
+    Y1 = numerator / denominator
+
+    # stabilità numerica
+    Y1 = np.maximum(Y1, 1e-15)
+
+    return Y1
+
+
+def estimate_e1_upper(mu, nu, E_nu, Q_nu, Y1):
+    """
+    Upper bound on single-photon error rate e1
+    """
+    e1 = (E_nu * Q_nu * np.exp(nu)) / (nu * Y1)
+
+    # limiti fisici
+    e1 = np.clip(e1, 0.0, 0.5)
+
+    return e1
+
 
 # ================================
-# INTERFACCIA
+# Key Rate (asintotico)
 # ================================
 
-def compute_decoy_rate(detection_mu, detection_nu, mu, nu):
+def compute_key_rate_decoy(
+    mu,
+    nu,
+    Q_mu,
+    Q_nu,
+    E_mu,
+    E_nu,
+    f_ec=1.16,
+    q=0.5
+):
     """
-    detection_mu: risultati per segnale
-    detection_nu: risultati per decoy
+    Returns:
+    --------
+    skr_decoy : secret key rate
+    Y1 : single photon yield
+    e1 : single photon error rate
     """
 
-    Q_mu = detection_mu["p_click"]
-    E_mu = detection_mu["qber"]
-
-    Q_nu = detection_nu["p_click"]
-
     # ----------------------------
-    # STIME
+    # Bounds
     # ----------------------------
-    Y1 = estimate_y1(Q_mu, Q_nu, mu, nu)
-    Y1 = np.maximum(Y1, 1e-12)
 
-    e1 = estimate_e1(E_mu, Q_mu, Y1, mu)
-    e1 = np.clip(e1, 0, 0.5)
+    Y1 = estimate_Y1_lower(mu, nu, Q_mu, Q_nu)
+    e1 = estimate_e1_upper(mu, nu, E_nu, Q_nu, Y1)
 
     # ----------------------------
-    # KEY RATE
+    # Single-photon gain
     # ----------------------------
-    R = decoy_key_rate(Q_mu, E_mu, Y1, e1)
-    R = np.maximum(R,0)
-    return {
-        "skr_decoy": R,
-        "Y1": Y1,
-        "e1": e1
-    }
+
+    Q1 = Y1 * mu * np.exp(-mu)
+
+    # ----------------------------
+    # Key rate
+    # ----------------------------
+
+    R = q * (
+        - Q_mu * f_ec * binary_entropy(E_mu)
+        + Q1 * (1 - binary_entropy(e1))
+    )
+
+    # clamp fisico
+    R = np.maximum(R, 0.0)
+
+    return R, Y1, e1

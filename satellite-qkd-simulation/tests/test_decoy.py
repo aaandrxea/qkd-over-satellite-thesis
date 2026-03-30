@@ -1,38 +1,35 @@
 import numpy as np
 
-from src.qkd.decoy_state import compute_decoy_rate
+from src.qkd.decoy_state import compute_key_rate_decoy
 
 
-def test_decoy_basic():
+def test_decoy():
 
-    # finti dati realistici
-    Q_mu = np.linspace(1e-6, 1e-2, 1000)
-    Q_nu = 0.5 * Q_mu
+    mu = 0.5
+    nu = 0.1
 
-    detection_mu = {
-        "p_click": Q_mu,
-        "qber": np.full_like(Q_mu, 0.02)
-    }
+    Q_mu = 1e-3
+    Q_nu = 2e-4
 
-    detection_nu = {
-        "p_click": Q_nu,
-        "qber": np.full_like(Q_mu, 0.02)
-    }
+    E_mu = 0.02
+    E_nu = 0.03
 
-    results = compute_decoy_rate(
-        detection_mu,
-        detection_nu,
-        mu=0.5,
-        nu=0.1
+    R, Y1, e1 = compute_key_rate_decoy(
+        mu, nu,
+        Q_mu, Q_nu,
+        E_mu, E_nu
     )
 
-    skr = results["skr_decoy"]
+    print("R:", R)
+    print("Y1:", Y1)
+    print("e1:", e1)
 
-    assert np.all(skr >= 0)
+    assert R >= 0
+    assert 0 <= e1 <= 0.5
+    assert Y1 > 0
 
-    print("DEBUG Decoy SKR mean:", np.mean(skr))
     print("✓ Decoy OK")
 
 
 if __name__ == "__main__":
-    test_decoy_basic()
+    test_decoy()
