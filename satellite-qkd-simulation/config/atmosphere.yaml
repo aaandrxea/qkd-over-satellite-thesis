@@ -21,4 +21,5 @@ H_aer: 1200
 humidity: 0.5
 alpha_rayleigh_0: 5e-5
 alpha_aer_0: 3e-4
-alpha_humidity_0: 5e-5alpha_ozone_0: 5e-6
+alpha_humidity_0: 5e-5
+alpha_ozone_0: 5e-6

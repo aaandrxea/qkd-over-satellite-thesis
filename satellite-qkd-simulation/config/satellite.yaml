@@ -1,2 +1,2 @@
-tle_file: "data/tle.txt"
+tle_file: "data/iss.tle"
 altitude_km: 500
