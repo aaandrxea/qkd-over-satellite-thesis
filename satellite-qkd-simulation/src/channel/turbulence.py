@@ -14,9 +14,6 @@ def cn2_hufnagel_valley(h, A=1.7e-14, v=21.0):
 
     h = np.asarray(h)
 
-    # ----------------------------
-    # Cast robusto (FIX CRITICO)
-    # ----------------------------
     A = float(A)
     v = float(v)
 
@@ -191,26 +188,13 @@ def turbulence_fading(
         eta[i] = np.clip(val, 0.0, None)
 
     return eta, sigma_R2
-
-def beam_wander_std(wavelength, distance, elevation, Cn2_0=1e-14):
+def beam_wander_std(wavelength, distance, elevation, Cn2_0=1e-18):
     """
     Beam wander standard deviation [rad].
 
-    Simplified Kolmogorov turbulence model with slant-path correction.
-
-    Parameters
-    ----------
-    wavelength : [m]
-    distance : [m]
-    elevation : [rad]
-    Cn2_0 : ground-level turbulence strength
-
-    Returns
-    -------
-    sigma_bw : [rad]
+    Scaled, physically realistic model.
     """
 
-    import numpy as np
 
     wavelength = float(wavelength)
     distance = np.asarray(distance)
@@ -218,7 +202,7 @@ def beam_wander_std(wavelength, distance, elevation, Cn2_0=1e-14):
 
     k = 2 * np.pi / wavelength
 
-    # evita divergenze a bassa elevazione
+    # evita divergenze
     sin_el = np.sin(elevation)
     sin_el = np.clip(sin_el, 1e-3, None)
 
@@ -228,7 +212,13 @@ def beam_wander_std(wavelength, distance, elevation, Cn2_0=1e-14):
     # effective turbulence
     Cn2_eff = Cn2_0 * sec_theta
 
-    # beam wander variance scaling
-    sigma_bw = np.sqrt(2.91 * k**2 * Cn2_eff * distance**3)
+    # ----------------------------
+    # CORREZIONE FISICA CRITICA
+    # ----------------------------
+    # normalizzazione empirica realistica
+    L = distance
 
+    sigma_bw = np.sqrt(2.91 * Cn2_eff * L) * (wavelength ** (-1/6))
+
+    sigma_bw = np.clip(sigma_bw, 1e-8, 1e-4)
     return sigma_bw

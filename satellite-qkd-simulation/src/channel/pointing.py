@@ -60,7 +60,6 @@ def pointing_offset(
     r = R * θ
     """
 
-    import numpy as np
     from src.channel.turbulence import beam_wander_std
 
     R = np.asarray(R)
@@ -85,16 +84,14 @@ def pointing_offset(
     # ----------------------------
     # 2D Gaussian → Rayleigh
     # ----------------------------
-    theta_x = np.random.normal(0, sigma_total, size=len(R))
-    theta_y = np.random.normal(0, sigma_total, size=len(R))
+    n_samples = 5000
+
+    theta_x = np.random.normal(0, sigma_total, size=(n_samples, len(R)))
+    theta_y = np.random.normal(0, sigma_total, size=(n_samples, len(R)))
 
     theta = np.sqrt(theta_x**2 + theta_y**2)
 
-    # ----------------------------
-    # Convert to radial offset
-    # ----------------------------
     r = R * theta
-    print("sigma_bw mean:", np.mean(sigma_bw))
     return r
 
 # ==========================================================
@@ -145,7 +142,7 @@ def pointing_fading(
     # ----------------------------
     # Parameters
     # ----------------------------
-    sigma_theta = float(config.get("sigma_theta", 1e-6))
+    sigma_theta = float(config.get("sigma_theta", 3e-7))
     static_offset = float(config.get("static_offset", 0.0))
 
     R = np.asarray(R)
@@ -154,8 +151,7 @@ def pointing_fading(
     # ----------------------------
     # Beam propagation
     # ----------------------------
-    w0 = beam_waist(tx_diameter)
-
+    w0 = tx_diameter / 2.0
     z_R = np.pi * w0**2 / wavelength
     w_z = w0 * np.sqrt(1 + (R / z_R)**2)
 
@@ -169,14 +165,12 @@ def pointing_fading(
         elevation
     )
 
-    # ----------------------------
-    # Static offset
-    # ----------------------------
+    # r_jitter ora è (n_samples, N)
+
     r_total = np.sqrt(r_jitter**2 + static_offset**2)
 
-    # ----------------------------
-    # Gaussian coupling
-    # ----------------------------
-    eta_point = np.exp(-2 * (r_total / w_z)**2)
+    eta_samples = np.exp(-2 * (r_total / w_z)**2)
 
+    # MEDIA CORRETTA
+    eta_point = np.mean(eta_samples, axis=0)
     return eta_point
