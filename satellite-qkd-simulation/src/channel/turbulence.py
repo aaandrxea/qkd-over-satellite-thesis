@@ -44,7 +44,7 @@ def rytov_variance(
     wavelength,
     distance,
     elevation,
-    A=1.7e-14,
+    A = 1e-13,   #A=1.7e-14,
     v=21.0,
     n_steps=500
 ):
@@ -162,7 +162,7 @@ def turbulence_fading(
             v=v,
             n_steps=n_steps
         )
-
+        
         sigma_R2[i] = sigma
 
         if model == "auto":
@@ -183,7 +183,7 @@ def turbulence_fading(
             raise ValueError(f"Unknown model: {model}")
 
         if size is not None:
-            val = np.mean(val)
+            val = val[0]
 
         eta[i] = np.clip(val, 0.0, None)
 

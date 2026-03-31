@@ -4,8 +4,25 @@ import matplotlib.pyplot as plt
 from src.simulation.run_orbit_simulation import run_orbit_simulation
 
 
-result = run_orbit_simulation()
+N = 1   # numero realizzazioni
 
+all_skr = []
+all_elev = None
+
+for i in range(N):
+    result = run_orbit_simulation()
+
+    vis = result["visible"]
+
+    elev = np.rad2deg(vis["elevation"])
+    skr = vis["skr"]
+
+    if all_elev is None:
+        all_elev = elev
+
+    all_skr.append(skr)
+
+all_skr = np.array(all_skr)  # shape: (N, time)
 # ======================================================
 # DATI CORRETTI
 # ======================================================
@@ -32,6 +49,13 @@ skr = skr[idx]
 # BINNING
 # ======================================================
 bins = np.linspace(0, 90, 50)
+
+elev = all_elev
+idx = elev > 0
+
+elev = elev[idx]
+skr_all = all_skr[:, idx]
+
 digitized = np.digitize(elev, bins)
 
 skr_avg = []
@@ -39,13 +63,14 @@ skr_std = []
 elev_bin = []
 
 for i in range(1, len(bins)):
-    mask_bin = digitized == i
+    mask = digitized == i
 
-    if np.any(mask_bin):
-        skr_avg.append(np.mean(skr[mask_bin]))
-        skr_std.append(np.std(skr[mask_bin]))
-        elev_bin.append(np.mean(elev[mask_bin]))
+    if np.any(mask):
+        values = skr_all[:, mask]   # 🔴 tutte le realizzazioni
 
+        skr_avg.append(np.mean(values))
+        skr_std.append(np.std(values))
+        elev_bin.append(np.mean(elev[mask]))
 # ======================================================
 # PLOT
 # ======================================================

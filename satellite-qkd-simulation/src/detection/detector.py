@@ -57,8 +57,7 @@ def compute_detection(
     p_dark = np.full(shape, p_dark)
 
     # background
-    p_bg = bg_rate * gate_time
-
+    p_bg = 1 - np.exp(-bg_rate * gate_time)
     # total noise (indipendenti)
     p_noise = p_dark + p_bg
 
@@ -88,7 +87,10 @@ def compute_detection(
           "sig=", np.mean(p_sig),
           "noise=", np.mean(p_noise),
           "bg=", np.mean(p_bg))
-
+    print("DET:",
+      "sig=", np.mean(p_sig),
+      "noise=", np.mean(p_noise),
+      "bg=", np.mean(p_bg))
     # ======================================================
     # OUTPUT
     # ======================================================

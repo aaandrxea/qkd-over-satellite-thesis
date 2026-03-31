@@ -78,6 +78,27 @@ def background_photon_rate(
     # POWER → PHOTONS
     # ==========================================================
     P = L * A * Omega * bandwidth
+    # ----------------------------------------------------------
+    # 🔴 BOOST BACKGROUND (CRITICO PER REGIME DI SOGLIA)
+    # ----------------------------------------------------------
+    P *= 100
+    # ----------------------------------------------------------
+    # 🔴 FORZA REGIME REALISTICO (TEMPORANEO)
+    # ----------------------------------------------------------
+    
     E_ph = h * c / wavelength
-    print("DEBUG background:", np.mean(L), np.mean(airmass))
-    return P / E_ph
+    bg_rate = P / E_ph
+    bg_rate *= 1e5
+    # ----------------------------------------------------------
+    # 🔴 FLUTTUAZIONI BACKGROUND (CRITICO)
+    # ----------------------------------------------------------
+    sigma_bg = 1.0   # forza della variabilità (0.5–2)
+
+    X = np.random.normal(
+        loc=-0.5 * sigma_bg**2,
+        scale=sigma_bg,
+        size=bg_rate.shape
+    )
+
+    bg_rate = bg_rate * np.exp(X)    
+    return bg_rate

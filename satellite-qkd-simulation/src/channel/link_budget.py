@@ -8,7 +8,6 @@ from src.channel.turbulence import turbulence_fading
 from src.channel.pointing import beam_waist, beam_radius, pointing_fading
 from src.channel.background import background_photon_rate
 
-
 # ==========================================================
 # CONFIG
 # ==========================================================
@@ -135,8 +134,10 @@ def compute_link_budget(
         eta_aperture *
         eta_atm *
         eta_point *
-        eta_sys
+        eta_sys*
+        eta_turb
     )
+
 
     eta_total = np.clip(eta_total, 0.0, 1.0)
 
@@ -152,17 +153,16 @@ def compute_link_budget(
         elevation_rad=elevation,
         condition=condition
     )
+    print("TURB:",
+      np.mean(eta_turb),
+      np.std(eta_turb))
 
-    # ----------------------------
-    # DEBUG (TEMPORANEO)
-    # ----------------------------
-    print("DEBUG BG:",
-          "mean=", np.mean(background),
-          "min=", np.min(background),
-          "max=", np.max(background))
-    print("DEBUG ELEVATION:",
-      elevation[:5],
-      elevation[-5:])
+    print("TOTAL:",
+        np.mean(eta_total),
+        np.std(eta_total))
+    print("ETA TOTAL:",
+      np.mean(eta_total),
+      np.std(eta_total))
     return {
         "eta_aperture": eta_aperture,
         "eta_atm": eta_atm,
@@ -171,7 +171,7 @@ def compute_link_budget(
         "eta_point": eta_point,
         "eta_sys": eta_sys,
         "eta_total": eta_total,
-        "background": background   # ← ORA ESISTE DAVVERO
+        "background": background 
     }
 
 

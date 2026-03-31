@@ -192,7 +192,8 @@ def run_orbit_simulation(
 
     # ⚠️ BACKGROUND DAL CHANNEL
     bg_rate = channel["background"]
-
+    print("BG SHAPE:", np.shape(bg_rate))
+    print("ETA SHAPE:", np.shape(eta))
     det_mu = compute_detection(
         eta,
         mu,
@@ -210,7 +211,10 @@ def run_orbit_simulation(
         e_opt,
         bg_rate=bg_rate
     )
-
+    print("BG_RATE DEBUG:",
+      np.mean(bg_rate),
+      np.min(bg_rate),
+      np.max(bg_rate))
     det_0 = compute_detection(
         eta,
         0.0,
