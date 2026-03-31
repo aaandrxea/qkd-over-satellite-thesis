@@ -190,12 +190,16 @@ def run_orbit_simulation(
     dark_rate = detector_cfg["dark_rate"]
     gate_time = detector_cfg["gate_time"]
 
+    # ⚠️ BACKGROUND DAL CHANNEL
+    bg_rate = channel["background"]
+
     det_mu = compute_detection(
         eta,
         mu,
         dark_rate,
         gate_time,
-        e_opt
+        e_opt,
+        bg_rate=bg_rate
     )
 
     det_nu = compute_detection(
@@ -203,7 +207,8 @@ def run_orbit_simulation(
         nu,
         dark_rate,
         gate_time,
-        e_opt
+        e_opt,
+        bg_rate=bg_rate
     )
 
     det_0 = compute_detection(
@@ -211,8 +216,10 @@ def run_orbit_simulation(
         0.0,
         dark_rate,
         gate_time,
-        e_opt
+        e_opt,
+        bg_rate=bg_rate
     )
+
 
     # ======================================================
     # QKD (DECOY)
@@ -232,34 +239,29 @@ def run_orbit_simulation(
     print("Max QBER:", np.max(det_mu["qber"]))
     print("Min QBER:", np.min(det_mu["qber"]))
     # ======================================================
-    # OUTPUT (FULL TRACEABILITY)
+    # OUTPUT (CONSISTENT & SAFE)
     # ======================================================
     return {
-        # time
-        "time_full": t_seconds,
-        "time_visible": t_vis,
+        # ================= FULL TIMELINE =================
+        "full": {
+            "time": t_seconds,
+            "R": R,
+            "elevation": elevation,
+            "mask": mask,
+        },
 
-        # geometry
-        "R_full": R,
-        "elevation_full": elevation,
-        "mask": mask,
-
-        "R": R_vis,
-        "elevation": elevation_vis,
-
-        # channel
-        "eta": eta,
-
-        # detection
-        "p_click": det_mu["p_click"],
-        "qber": det_mu["qber"],
-
-        # QKD
-        "skr": skr
+        # ================= VISIBLE ONLY =================
+        "visible": {
+            "time": t_vis,
+            "R": R_vis,
+            "elevation": elevation_vis,
+            "eta": eta,
+            "qber": det_mu["qber"],
+            "p_click": det_mu["p_click"],
+            "skr": skr,
+        }
     }
-
 if __name__ == "__main__":
     result = run_orbit_simulation()
-    plot_results(result)
     print("Simulation completed")
     print("Max SKR:", result["skr"].max())

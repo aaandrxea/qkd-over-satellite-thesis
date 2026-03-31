@@ -6,6 +6,7 @@ from src.utils.io import load_yaml
 from src.channel.atmospheric import atmospheric_transmittance
 from src.channel.turbulence import turbulence_fading
 from src.channel.pointing import beam_waist, beam_radius, pointing_fading
+from src.channel.background import background_photon_rate
 
 
 # ==========================================================
@@ -17,7 +18,7 @@ def load_channel_config(config_path: str = "config/scenario.yaml") -> dict:
 
 
 # ==========================================================
-# APERTURE COUPLING (Gaussian beam)
+# APERTURE COUPLING
 # ==========================================================
 
 def aperture_coupling(
@@ -26,15 +27,6 @@ def aperture_coupling(
     tx_diameter: float,
     rx_diameter: float
 ) -> np.ndarray:
-    """
-    Fraction of power collected by receiver aperture.
-
-    η = 1 - exp(-2 a^2 / w^2)
-
-    where:
-    a = receiver radius
-    w = beam radius at distance R
-    """
 
     R = np.asarray(R)
 
@@ -61,24 +53,17 @@ def optical_efficiency(
 
 
 # ==========================================================
-# MAIN LINK BUDGET
+# MAIN LINK BUDGET (FIXED VERSION)
 # ==========================================================
 
 def compute_link_budget(
     R: np.ndarray,
-    elevation: np.ndarray,
+    elevation: np.ndarray,   # ⚠️ DEVE essere in radianti
     wavelength: float,
     tx_diameter: float,
     rx_diameter: float,
     config: dict | None = None
 ) -> dict:
-    """
-    Full physical link budget for free-space QKD.
-
-    Returns
-    -------
-    dict with all channel efficiencies
-    """
 
     if config is None:
         config = load_channel_config()
@@ -89,6 +74,10 @@ def compute_link_budget(
     eta_tx = config.get("eta_tx", 1.0)
     eta_rx = config.get("eta_rx", 1.0)
     eta_misc = config.get("eta_misc", 1.0)
+
+    fov = config.get("fov", 1e-6)
+    bandwidth = config.get("bandwidth", 1e-9)
+    condition = config.get("condition", "day")
 
     # ----------------------------
     # Aperture coupling
@@ -123,12 +112,13 @@ def compute_link_budget(
     # Pointing
     # ----------------------------
     eta_point = pointing_fading(
-    R,
-    wavelength,
-    elevation,
-    tx_diameter,
-    config=config.get("pointing", {})
+        R,
+        wavelength,
+        elevation,
+        tx_diameter,
+        config=config.get("pointing", {})
     )
+
     # ----------------------------
     # System efficiency
     # ----------------------------
@@ -150,6 +140,29 @@ def compute_link_budget(
 
     eta_total = np.clip(eta_total, 0.0, 1.0)
 
+    # ==========================================================
+    # BACKGROUND (FINAL FIX)
+    # ==========================================================
+
+    background = background_photon_rate(
+        wavelength=wavelength,
+        rx_diameter=rx_diameter,
+        fov=fov,
+        bandwidth=bandwidth,
+        elevation_rad=elevation,
+        condition=condition
+    )
+
+    # ----------------------------
+    # DEBUG (TEMPORANEO)
+    # ----------------------------
+    print("DEBUG BG:",
+          "mean=", np.mean(background),
+          "min=", np.min(background),
+          "max=", np.max(background))
+    print("DEBUG ELEVATION:",
+      elevation[:5],
+      elevation[-5:])
     return {
         "eta_aperture": eta_aperture,
         "eta_atm": eta_atm,
@@ -157,7 +170,8 @@ def compute_link_budget(
         "sigma_R2": sigma_R2,
         "eta_point": eta_point,
         "eta_sys": eta_sys,
-        "eta_total": eta_total
+        "eta_total": eta_total,
+        "background": background   # ← ORA ESISTE DAVVERO
     }
 
 
