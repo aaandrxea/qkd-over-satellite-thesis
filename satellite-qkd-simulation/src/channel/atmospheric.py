@@ -61,95 +61,84 @@ def slant_path_altitude(s: np.ndarray, elevation: float, h_ground: float = 0.0) 
 # ==========================================================
 # EXTINCTION MODEL
 # ==========================================================
+
 def extinction_coefficient(
     h: np.ndarray,
     wavelength: float,
     config: dict
 ) -> np.ndarray:
     """
-    High-fidelity atmospheric extinction model.
+    High-fidelity atmospheric extinction model (MERGED).
 
     Includes:
-    - Rayleigh scattering (λ^-4)
-    - Aerosol (Ångström law)
-    - Humidity absorption (empirical)
-    - Ozone absorption (simplified band model)
-
-    Parameters
-    ----------
-    h : altitude [m]
-    wavelength : [m]
-    config : dict
+    - Rayleigh scattering (λ^-4, density-dependent)
+    - Aerosol / Mie (Ångström + vertical profile)
+    - Humidity absorption
+    - Ozone absorption
 
     Returns
     -------
     alpha : [1/m]
     """
-
-    # ------------------------------------------------------
-    # Input
-    # ------------------------------------------------------
     h = np.asarray(h)
     wavelength = float(wavelength)
 
-    wl_um = wavelength * 1e6  # micrometri
+    wl_um = wavelength * 1e6
 
-    # ------------------------------------------------------
-    # 1. RAYLEIGH SCATTERING
-    # ------------------------------------------------------
+    # ======================================================
+    # 1. RAYLEIGH (SCATTERING MOLECOLARE)
+    # ======================================================
     alpha_ray_0 = float(config.get("alpha_rayleigh_0", 1e-5))
     lambda_ref = float(config.get("lambda_ref", 800e-9))
-
     alpha_ray = (
         alpha_ray_0 *
         (lambda_ref / wavelength) ** 4 *
         (air_density(h) / RHO_0)
     )
 
-    # ------------------------------------------------------
-    # 2. AEROSOL (Ångström model)
-    # ------------------------------------------------------
+    # ======================================================
+    # 2. MIE / AEROSOL (SCATTERING)
+    # ======================================================
+
     alpha_aer_0 = float(config.get("alpha_aer_0", 5e-5))
     angstrom = float(config.get("angstrom_exponent", 1.3))
     H_aer = float(config.get("H_aer", 1200.0))
-
-    alpha_aer = (
+    
+    alpha_mie = (
         alpha_aer_0 *
         (wl_um / 0.55) ** (-angstrom) *
         np.exp(-h / H_aer)
     )
 
-    # ------------------------------------------------------
-    # 3. HUMIDITY ABSORPTION (empirical)
-    # ------------------------------------------------------
-    humidity = float(config.get("humidity", 0.5))  # 0–1
-
-    # absorption stronger in IR
+    # ======================================================
+    # 3. HUMIDITY ABSORPTION
+    # ======================================================
+    
+    humidity = float(config.get("humidity", 0.5))
     alpha_hum_0 = float(config.get("alpha_humidity_0", 1e-5))
-
+    
     alpha_hum = (
         alpha_hum_0 *
         humidity *
         np.exp(-h / 2000.0) *
-        (wl_um / 1.0)  # cresce verso IR
+        (wl_um / 1.0)
     )
 
-    # ------------------------------------------------------
-    # 4. OZONE ABSORPTION (simplified band)
-    # ------------------------------------------------------
+    # ======================================================
+    # 4. OZONE ABSORPTION
+    # ======================================================
     alpha_oz_0 = float(config.get("alpha_ozone_0", 5e-6))
-
-    # picco UV-vis (~0.6 μm), trascurabile in IR
     ozone_band = np.exp(-((wl_um - 0.6) / 0.2)**2)
 
     alpha_oz = alpha_oz_0 * ozone_band * np.exp(-h / 15000.0)
 
-    # ------------------------------------------------------
+    # ======================================================
     # TOTAL
-    # ------------------------------------------------------
-    alpha = alpha_ray + alpha_aer + alpha_hum + alpha_oz
+    # ======================================================
+    alpha_total = alpha_ray + alpha_mie + alpha_hum + alpha_oz
 
-    return np.clip(alpha, 0.0, None)
+    return np.clip(alpha_total, 0.0, None)
+
 # ==========================================================
 # TRANSMITTANCE (NUMERICAL INTEGRATION)
 # ==========================================================

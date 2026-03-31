@@ -194,14 +194,17 @@ def run_orbit_simulation(
     bg_rate = channel["background"]
     print("BG SHAPE:", np.shape(bg_rate))
     print("ETA SHAPE:", np.shape(eta))
+    
     det_mu = compute_detection(
         eta,
         mu,
         dark_rate,
         gate_time,
         e_opt,
-        bg_rate=bg_rate
-    )
+        bg_rate=bg_rate,
+        afterpulse_prob=detector_cfg.get("afterpulse_prob", 0.02),
+        dead_time=detector_cfg.get("dead_time", 50e-9)
+        )
 
     det_nu = compute_detection(
         eta,
@@ -209,8 +212,10 @@ def run_orbit_simulation(
         dark_rate,
         gate_time,
         e_opt,
-        bg_rate=bg_rate
-    )
+        bg_rate=bg_rate,
+        afterpulse_prob=detector_cfg.get("afterpulse_prob", 0.02),
+        dead_time=detector_cfg.get("dead_time", 50e-9)
+        )
     print("BG_RATE DEBUG:",
       np.mean(bg_rate),
       np.min(bg_rate),
@@ -221,7 +226,9 @@ def run_orbit_simulation(
         dark_rate,
         gate_time,
         e_opt,
-        bg_rate=bg_rate
+        bg_rate=bg_rate,
+        afterpulse_prob=detector_cfg.get("afterpulse_prob", 0.02),
+        dead_time=detector_cfg.get("dead_time", 50e-9)    
     )
 
 
@@ -256,14 +263,16 @@ def run_orbit_simulation(
 
         # ================= VISIBLE ONLY =================
         "visible": {
-            "time": t_vis,
-            "R": R_vis,
-            "elevation": elevation_vis,
-            "eta": eta,
-            "qber": det_mu["qber"],
-            "p_click": det_mu["p_click"],
-            "skr": skr,
-        }
+        "time": t_vis,
+        "R": R_vis,
+        "elevation": elevation_vis,
+        "eta": eta,
+        "qber": det_mu["qber"],
+        "p_click": det_mu["p_click"],
+        "skr": skr,
+        "cloud_state": channel["cloud_state"],
+        "eta_cloud": channel["eta_cloud"],
+    }
     }
 if __name__ == "__main__":
     result = run_orbit_simulation()

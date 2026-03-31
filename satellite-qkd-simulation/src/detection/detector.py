@@ -1,108 +1,97 @@
 import numpy as np
-from src.detection.noise import total_noise_probability
 
 
+# ==========================================================
+# MAIN DETECTION MODEL (PHYSICAL, POISSON-BASED)
+# ==========================================================
 def compute_detection(
     eta_total,
     mu,
     dark_rate,
     gate_time,
     e_opt,
-    bg_rate=0.0
-):
+    bg_rate=0.0,
+    afterpulse_prob=0.02,
+    dead_time=50e-9
+    ):
     """
-    Detection model deterministico e consistente.
-
-    Parametri:
-    - eta_total: efficienza totale (array)
-    - mu: numero medio di fotoni per impulso
-    - dark_rate: rate dark counts (Hz)
-    - gate_time: durata gate (s)
-    - e_opt: errore ottico
-    - bg_rate: rate background (Hz) → può essere array
-
-    Output:
-    dict con p_sig, p_noise, p_click, qber
+    Detection model with:
+    - Poisson statistics
+    - dead time (non-paralyzable)
+    - afterpulsing
     """
 
-    # ======================================================
-    # INPUT SANITIZATION
-    # ======================================================
     eta_total = np.asarray(eta_total)
     bg_rate = np.asarray(bg_rate)
-
-    shape = eta_total.shape
-
     mu = float(mu)
     dark_rate = float(dark_rate)
     gate_time = float(gate_time)
-    e_opt = float(e_opt)
+    afterpulse_prob = float(afterpulse_prob)
+    dead_time = float(dead_time)
+    if bg_rate.shape == ():
+        bg_rate = np.full_like(eta_total, bg_rate)
 
     # ======================================================
-    # SIGNAL
+    # MEAN PHOTON NUMBERS
     # ======================================================
-    # probabilità di detection del segnale (Poisson → approx)
-    p_sig = mu * eta_total
+    lambda_sig = mu * eta_total
+    lambda_dark = float(dark_rate) * float(gate_time)
+    lambda_dark = np.full_like(lambda_sig, lambda_dark, dtype=float)
+    lambda_bg = bg_rate * gate_time
 
-    # evita valori > 1
-    p_sig = np.clip(p_sig, 0, 1)
-
-    # ======================================================
-    # NOISE
-    # ======================================================
-    # dark counts
-    p_dark = dark_rate * gate_time
-
-    # broadcast
-    p_dark = np.full(shape, p_dark)
-
-    # background
-    p_bg = 1 - np.exp(-bg_rate * gate_time)
-    # total noise (indipendenti)
-    p_noise = p_dark + p_bg
-
-    # evita >1
-    p_noise = np.clip(p_noise, 0, 1)
+    lambda_noise = lambda_dark + lambda_bg
 
     # ======================================================
-    # CLICK PROBABILITY
+    # POISSON PROBABILITIES
     # ======================================================
-    p_click = p_sig + p_noise
+    lambda_total = lambda_sig + lambda_noise
 
-    p_click = np.clip(p_click, 0, 1)
+    p_click_raw = 1 - np.exp(-lambda_total)
+
+    # ======================================================
+    # DEAD TIME EFFECT
+    # ======================================================
+    rate_raw = p_click_raw / gate_time
+
+    rate_eff = rate_raw / (1 + rate_raw * dead_time)
+
+    p_click = rate_eff * gate_time
+
+    # ======================================================
+    # AFTERPULSING
+    # ======================================================
+    p_after = p_click * afterpulse_prob
+
+    p_noise = (1 - np.exp(-lambda_noise)) + p_after
+
+    # ======================================================
+    # SIGNAL COMPONENT
+    # ======================================================
+    p_sig = 1 - np.exp(-lambda_sig)
 
     # ======================================================
     # QBER
     # ======================================================
     error = 0.5 * p_noise + e_opt * p_sig
 
-    total = np.maximum(p_sig + p_noise, 1e-15)
-
-    qber = error / total
+    qber = error / np.maximum(p_click, 1e-15)
 
     # ======================================================
-    # DEBUG (leggero)
+    # SAFETY
     # ======================================================
-    print("DET:",
-          "sig=", np.mean(p_sig),
-          "noise=", np.mean(p_noise),
-          "bg=", np.mean(p_bg))
-    print("DET:",
-      "sig=", np.mean(p_sig),
-      "noise=", np.mean(p_noise),
-      "bg=", np.mean(p_bg))
-    # ======================================================
-    # OUTPUT
-    # ======================================================
+    p_click = np.clip(p_click, 0.0, 1.0)
+    qber = np.clip(qber, 0.0, 0.5)
+
     return {
         "p_sig": p_sig,
-        "p_dark": p_dark,
-        "p_bg": p_bg,
         "p_noise": p_noise,
         "p_click": p_click,
         "qber": qber,
     }
 
+# ==========================================================
+# MONTE CARLO VERSION (OPTIONAL, FOR VALIDATION)
+# ==========================================================
 
 def compute_detection_mc(
     eta_total,
@@ -114,57 +103,44 @@ def compute_detection_mc(
     n_pulses=10000
 ):
     """
-    Monte Carlo detection model (realistic).
+    Monte Carlo detection model.
+
+    Useful for validation of analytical model.
     """
 
     eta_total = np.asarray(eta_total)
     bg_rate = np.asarray(bg_rate)
 
-    shape = eta_total.shape
+    if bg_rate.shape == ():
+        bg_rate = np.full_like(eta_total, bg_rate)
 
-    # ======================================================
-    # MEAN PHOTON NUMBERS
-    # ======================================================
+    # mean photon numbers
     lambda_sig = mu * eta_total
     lambda_dark = dark_rate * gate_time
     lambda_bg = bg_rate * gate_time
 
-    # broadcast
-    lambda_dark = np.full(shape, lambda_dark)
+    lambda_dark = np.full_like(lambda_sig, lambda_dark)
 
-    # ======================================================
-    # MONTE CARLO SAMPLING
-    # ======================================================
+    # sampling
     signal_counts = np.random.poisson(lambda_sig * n_pulses)
     dark_counts = np.random.poisson(lambda_dark * n_pulses)
     bg_counts = np.random.poisson(lambda_bg * n_pulses)
 
     noise_counts = dark_counts + bg_counts
 
-    # ======================================================
-    # CLICK PROBABILITY
-    # ======================================================
-    clicks = signal_counts + noise_counts
-    p_click = clicks / n_pulses
+    # total clicks
+    total_counts = signal_counts + noise_counts
+    p_click = total_counts / n_pulses
 
-    # ======================================================
-    # ERROR MODEL
-    # ======================================================
+    # error model
     error_counts = (
         np.random.binomial(signal_counts, e_opt)
         + np.random.binomial(noise_counts, 0.5)
     )
 
-    total_counts = np.maximum(signal_counts + noise_counts, 1)
+    total_counts_safe = np.maximum(total_counts, 1)
 
-    qber = error_counts / total_counts
-
-    # ======================================================
-    # DEBUG (ridotto)
-    # ======================================================
-    print("MC DET:",
-          "mean_sig=", np.mean(signal_counts / n_pulses),
-          "mean_noise=", np.mean(noise_counts / n_pulses))
+    qber = error_counts / total_counts_safe
 
     return {
         "p_sig": signal_counts / n_pulses,
