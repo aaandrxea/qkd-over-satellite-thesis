@@ -1,65 +1,93 @@
-# =========================================================
-# OPTICAL SYSTEM
-# =========================================================
-tx_diameter: 0.1
-rx_diameter: 0.5
+# ==========================================================
+# GLOBAL SCENARIO CONFIGURATION
+# ==========================================================
 
-eta_tx: 0.8
-eta_rx: 0.7
-eta_misc: 0.9
+# ----------------------------------------------------------
+# OPTICAL LINK
+# ----------------------------------------------------------
+wavelength: 8.0e-7        # [m]
 
-wavelength: 8e-7
-# =========================================================
-# FIELD OF VIEW / FILTER
-# =========================================================
-fov: 0.000001
-bandwidth: 0.000000001
-condition: "day"   # "day" or "night"
+tx_diameter: 0.1          # [m]
+rx_diameter: 0.5          # [m]
 
-# =========================================================
-# ATMOSPHERE
-# =========================================================
-atmosphere:
-  alpha_rayleigh_0: 5e-5
-  alpha_aer_0: 3e-4
-  alpha_humidity_0: 5e-5
-  alpha_ozone_0: 5e-6
-  angstrom_exponent: 1.3
-  H_aer: 1200
-  humidity: 0.5
-  n_steps: 300
+# ----------------------------------------------------------
+# QKD PARAMETERS
+# ----------------------------------------------------------
+mu: 0.5                   # signal intensity
+nu: 0.1                   # decoy intensity
 
-# =========================================================
+f_ec: 1.16                # error correction efficiency
+q: 0.5                    # basis sifting
+
+# ----------------------------------------------------------
 # TURBULENCE
-# =========================================================
+# ----------------------------------------------------------
 turbulence:
-  A: 0.00000000000005
-  v: 21.0
-  n_steps: 300
-  model: "auto"
 
-# =========================================================
+  A: 1.0e-14              # ground Cn^2
+  v: 21.0                 # wind speed [m/s]
+  n_steps: 200
+
+# ----------------------------------------------------------
 # POINTING
-# =========================================================
+# ----------------------------------------------------------
 pointing:
-  sigma_theta: 1e-6
-  static_offset: 0.0
 
-# =========================================================
-# BACKGROUND (NUOVO)
-# =========================================================
+  sigma_theta: 1.0e-6     # [rad]
+  static_offset: 0.0      # [m]
+
+# ----------------------------------------------------------
+# BACKGROUND
+# ----------------------------------------------------------
 background:
+
+  condition: "day"        # ["day", "night"]
   mie_g: 0.7
-  angstrom: 1.3
   albedo: 0.3
-  fluct_sigma: 0.25
+  fluct_sigma: 0.2
+  fov_rad: 0.0001          # 100 µrad (tipico satellite QKD)
+  bandwidth_nm: 1.0        # filtro stretto
+  optical_efficiency: 0.5
+  detector_efficiency: 0.6
+# ----------------------------------------------------------
+# CLOUD MODEL (ADVANCED 2D)
+# ----------------------------------------------------------
 clouds:
-  p_clear_to_cloud: 0.003
-  p_cloud_to_clear: 0.005
-  min_loss_db: 20
-  max_loss_db: 80
-# =========================================================
-# QKD
-# =========================================================
-mu: 0.5
-e_opt: 0.02
+
+  # spatial grid
+  nx: 200
+  ny: 50
+
+  correlation_length: 20
+
+  # wind + shear
+  wind_speed: 10.0        # [m/s]
+  shear: 5.0              # vertical shear coefficient
+
+  # attenuation
+
+
+  p_clear: 0.7
+  correlation_time: 30.0   # secondi
+
+  min_loss_db: 1.0
+  max_loss_db: 8.0
+
+  efficiency: 0.95
+
+  p_extreme: 0.005          # 0.5% eventi rari
+  extreme_mean_db: 15.0
+  extreme_sigma: 0.8
+
+  # coupling with atmosphere
+  atmosphere:
+    humidity: 0.5
+
+# ----------------------------------------------------------
+# SIMULATION
+# ----------------------------------------------------------
+simulation:
+
+  step_s: 1.0
+  duration_s: 1200
+  min_elevation_deg: 0.0

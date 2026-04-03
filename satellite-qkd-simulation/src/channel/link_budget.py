@@ -1,217 +1,198 @@
 import numpy as np
-
-from src.utils.constants import EPS
-from src.utils.io import load_yaml
-from src.channel.clouds import cloud_transmittance
-# CHANNEL COMPONENTS
+from src.channel.solar import solar_position, sun_los_angle
 from src.channel.atmospheric import atmospheric_transmittance
-from src.channel.turbulence import turbulence_fading
-from src.channel.pointing import beam_waist, beam_radius, pointing_fading
-from src.channel.background import background_photon_rate
+from src.channel.turbulence import compute_rytov_variance, sample_fading
+from src.channel.pointing import pointing_fading
+from src.channel.background import compute_background
+from src.channel.clouds import cloud_attenuation_2d
+
+EPS = 1e-15
 
 
 # ==========================================================
-# CONFIG
+# GAUSSIAN BEAM
 # ==========================================================
 
-def load_channel_config(config_path: str = "config/scenario.yaml") -> dict:
-    return load_yaml(config_path)
+def gaussian_beam_waist(tx_diameter: float) -> float:
+    return tx_diameter / 2.0
 
 
-# ==========================================================
-# APERTURE COUPLING (DIFFRACTION LIMITED)
-# ==========================================================
+def rayleigh_range(w0: float, wavelength: float) -> float:
+    return np.pi * w0**2 / wavelength
 
-def aperture_coupling(R, wavelength, tx_diameter, rx_diameter):
+def beam_radius(wavelength, tx_diameter, R):
     """
-    Gaussian beam → circular aperture coupling
+    Far-field Gaussian beam approximation (physically correct for satellite QKD)
     """
 
     R = np.asarray(R)
 
-    w0 = beam_waist(tx_diameter)
-    w = beam_radius(wavelength, w0, R)
+    theta = wavelength / (np.pi * tx_diameter / 2.0)
 
-    a = rx_diameter / 2.0
+    w_R = theta * R
 
-    eta = 1.0 - np.exp(-2.0 * (a**2) / (w**2 + EPS))
+    return np.maximum(w_R, 1e-12)
+
+def receiver_coupling_efficiency(w_R, rx_diameter):
+    w_R = np.maximum(w_R, EPS)
+    r_rx = rx_diameter / 2.0
+
+    eta = 1.0 - np.exp(-2.0 * (r_rx**2) / (w_R**2))
 
     return np.clip(eta, 0.0, 1.0)
 
 
 # ==========================================================
-# SYSTEM EFFICIENCY
+# GEOMETRIC LOSS (CORRETTA)
 # ==========================================================
 
-def optical_efficiency(eta_tx, eta_rx, eta_misc):
-    return eta_tx * eta_rx * eta_misc
+def geometric_loss(tx_diameter, rx_diameter, wavelength, R):
+
+    R = np.asarray(R)
+
+    w_R = beam_radius(wavelength, tx_diameter, R)
+
+    eta_geo = receiver_coupling_efficiency(w_R, rx_diameter)
+
+    beam = {
+        "w_R": w_R,
+        "w0": gaussian_beam_waist(tx_diameter),
+        "z_R": rayleigh_range(
+            gaussian_beam_waist(tx_diameter),
+            wavelength
+        )
+    }
+
+    return eta_geo, beam
 
 
 # ==========================================================
-# MAIN LINK BUDGET (PHYSICAL)
+# CHANNEL CORE
 # ==========================================================
-
 def compute_link_budget(
     R,
     elevation,
     wavelength,
     tx_diameter,
     rx_diameter,
-    config=None
+    config,
+    sun_angle=None,
+    sun_elevation=None
 ):
     """
-    Fully physical link budget (no hacks).
+    Fully consistent optical channel model
     """
-    wavelength = float(wavelength)
-    tx_diameter = float(tx_diameter)
-    rx_diameter = float(rx_diameter)
-    if config is None:
-        config = load_channel_config()
+
+    R = np.asarray(R)
+    elevation = np.asarray(elevation)
 
     # ======================================================
-    # PARAMETERS
+    # 1. GEOMETRY (beam + coupling)
     # ======================================================
-    eta_tx = config.get("eta_tx", 1.0)
-    eta_rx = config.get("eta_rx", 1.0)
-    eta_misc = config.get("eta_misc", 1.0)
 
-    fov = float(config.get("fov", 1e-6))
-    bandwidth = float(config.get("bandwidth", 1e-9))
-    condition = config.get("condition", "day")
-
-    # ======================================================
-    # 1. GEOMETRIC (DIFFRACTION)
-    # ======================================================
-    eta_geo = aperture_coupling(
-        R,
-        wavelength,
-        tx_diameter,
-        rx_diameter
+    eta_geo, beam = geometric_loss(
+        tx_diameter=tx_diameter,
+        rx_diameter=rx_diameter,
+        wavelength=wavelength,
+        R=R
     )
 
     # ======================================================
-    # 2. ATMOSPHERE (EXTINCTION)
+    # 2. ATMOSPHERE
     # ======================================================
-    atm_config = config.get("atmosphere", {}).copy()
-    atm_config["wavelength"] = float(wavelength)
 
     eta_atm = atmospheric_transmittance(
-        elevation,
         R,
-        config=atm_config
-    )
-
-    # ======================================================
-    # 3. TURBULENCE (SCINTILLATION)
-    # ======================================================
-    turb_cfg = config.get("turbulence", {})
-
-    eta_turb, sigma_R2 = turbulence_fading(
         elevation,
-        R,
         wavelength,
-        model=turb_cfg.get("model", "auto"),
-        A=turb_cfg.get("A", 1.7e-14),
-        v=turb_cfg.get("v", 21.0),
-        n_steps=turb_cfg.get("n_steps", 300)
+        config=config.get("atmosphere", {})
     )
 
     # ======================================================
-    # 4. POINTING (INCLUDE BEAM WANDER)
+    # 3. TURBULENCE
     # ======================================================
+
+    sigma_R2 = compute_rytov_variance(
+        wavelength,
+        R,
+        elevation,
+        config=config.get("turbulence", {})
+    )
+
+    eta_turb = np.exp(-np.abs(sample_fading(sigma_R2)))
+    # ======================================================
+    # 4. POINTING (USA BEAM)
+    # ======================================================
+
     eta_point = pointing_fading(
-        R,
-        wavelength,
-        elevation,
-        tx_diameter,
-        config=config.get("pointing", {})
+        R=R,
+        wavelength=wavelength,
+        elevation=elevation,
+        w_R=beam["w_R"],
+        config=config.get("pointing", {}),
+        dt=config.get("simulation", {}).get("step_s", None)
     )
 
     # ======================================================
-    # 5. SYSTEM
+    # 5. CLOUDS
     # ======================================================
-    eta_sys = optical_efficiency(
-        eta_tx,
-        eta_rx,
-        eta_misc
+
+    cloud_cfg = config.get("clouds", {})
+
+    cloud_state, eta_cloud = cloud_attenuation_2d(
+        n_steps=len(R),
+        elevation=elevation,
+        dt=config.get("simulation", {}).get("step_s", 0.1),
+        config=cloud_cfg
     )
 
     # ======================================================
-    # TOTAL LINK EFFICIENCY
+    # 6. TOTAL CHANNEL
     # ======================================================
+
     eta_total = (
-        eta_geo *
-        eta_atm *
-        eta_turb *
-        eta_point *
-        eta_sys
+        eta_geo
+        * eta_atm
+        * eta_turb
+        * eta_point
+        * eta_cloud
     )
-    # ======================================================
-    # CLOUDS
-    # ======================================================
-    N = len(eta_total)
 
-    eta_cloud, cloud_state = cloud_transmittance(
-        N,
-        config=config
-    )
-    print("CLOUD FRACTION:", np.mean(cloud_state))
-    print("ETA_CLOUD MIN/MAX:", np.min(eta_cloud), np.max(eta_cloud))
-    eta_total = eta_total * eta_cloud
     eta_total = np.clip(eta_total, 0.0, 1.0)
 
     # ======================================================
-    # BACKGROUND
+    # 7. BACKGROUND (CORRETTO)
     # ======================================================
-    background = background_photon_rate(
+    background = compute_background(
         wavelength=wavelength,
+        elevation=elevation,
         rx_diameter=rx_diameter,
-        fov=fov,
-        bandwidth=bandwidth,
-        elevation_rad=elevation,
-        condition=condition,
-        config=config
+        beam_radius=beam["w_R"],
+        sun_angle=sun_angle,
+        sun_elevation=sun_elevation,
+        config=config.get("background", {})
     )
 
+
     # ======================================================
-    # DEBUG (PHYSICS CHECK)
+    # OUTPUT
     # ======================================================
-    if config.get("debug", False):
-        print("\n--- LINK BUDGET DEBUG ---")
-        print("eta_geo   :", np.mean(eta_geo))
-        print("eta_atm   :", np.mean(eta_atm))
-        print("eta_turb  :", np.mean(eta_turb))
-        print("eta_point :", np.mean(eta_point))
-        print("eta_total :", np.mean(eta_total))
-        print("sigma_R2  :", np.mean(sigma_R2))
-        print("bg_rate   :", np.mean(background))
 
     return {
         "eta_total": eta_total,
-        "eta_geo": eta_geo,
-        "eta_atm": eta_atm,
-        "eta_turb": eta_turb,
-        "sigma_R2": sigma_R2,
-        "eta_point": eta_point,
-        "eta_sys": eta_sys,
+        "beam": beam,
         "background": background,
-        "eta_cloud": eta_cloud,
-        "cloud_state": cloud_state
-    }
 
+        "components": {
+            "geometry": eta_geo,
+            "atmosphere": eta_atm,
+            "turbulence": eta_turb,
+            "pointing": eta_point,
+            "cloud": eta_cloud,
+        },
 
-# ==========================================================
-# dB SCALE
-# ==========================================================
-
-def to_dB(x):
-    x = np.clip(x, 1e-15, None)
-    return -10.0 * np.log10(x)
-
-
-def link_budget_dB(results):
-    return {
-        k: to_dB(v)
-        for k, v in results.items()
-        if isinstance(v, np.ndarray)
+        "state": {
+            "sigma_R2": sigma_R2,
+            "cloud_state": cloud_state,
+        }
     }

@@ -5,76 +5,132 @@ from src.simulation.run_orbit_simulation import run_orbit_simulation
 
 
 # ======================================================
-# PARAMETRI
+# CONFIG
 # ======================================================
-N = 30   # numero realizzazioni Monte Carlo
+N_RUNS = 30
+N_BINS = 40
 
-# ======================================================
-# MONTE CARLO RUNS
-# ======================================================
-all_skr = []
-all_elev = None
-
-for i in range(N):
-    print(f"Run {i+1}/{N}")
-
-    result = run_orbit_simulation()
-
-    vis = result["visible"]
-
-    elev = np.rad2deg(vis["elevation"])
-    skr = vis["skr"]
-
-    if all_elev is None:
-        all_elev = elev
-
-    all_skr.append(skr)
-
-all_skr = np.array(all_skr)  # shape: (N, time)
 
 # ======================================================
-# FILTRO VISIBILITÀ
+# MAIN
 # ======================================================
-mask = all_elev > 0
+def main():
+    print("\n=== OUTAGE vs ELEVATION (MONTE CARLO) ===\n")
 
-elev = all_elev[mask]
-skr_all = all_skr[:, mask]
+    all_elev = []
+    all_skr = []
 
-# ======================================================
-# BINNING
-# ======================================================
-bins = np.linspace(0, 90, 40)
-digitized = np.digitize(elev, bins)
+    valid_runs = 0
 
-elev_bin = []
-outage_prob = []
+    # ==================================================
+    # MONTE CARLO
+    # ==================================================
+    for i in range(N_RUNS):
+        print(f"Run {i+1}/{N_RUNS}")
 
-for i in range(1, len(bins)):
-    mask_bin = digitized == i
+        result = run_orbit_simulation()
 
-    if np.any(mask_bin):
-        values = skr_all[:, mask_bin]   # shape: (N, n_points)
+        if result is None:
+            print("⚠ Skipped (no visible pass)")
+            continue
 
-        # outage per ogni realizzazione 
-        outage_runs = np.mean(values <= 0, axis=1)
+        elev = np.rad2deg(result["elevation"])
+        skr = result["skr"]
 
-        # poi media tra run
-        p_out = np.mean(outage_runs)
+        if len(elev) == 0:
+            print("⚠ Empty result")
+            continue
+
+        all_elev.append(elev)
+        all_skr.append(skr)
+
+        valid_runs += 1
+
+    if valid_runs == 0:
+        print("❌ No valid runs")
+        return
+
+    print(f"\nValid runs: {valid_runs}/{N_RUNS}")
+
+    # ==================================================
+    # CONCATENATION
+    # ==================================================
+    elev_all = np.concatenate(all_elev)
+    skr_all = np.concatenate(all_skr)
+
+    # ==================================================
+    # FILTER (VISIBLE ONLY)
+    # ==================================================
+    mask = elev_all > 0
+
+    elev_all = elev_all[mask]
+    skr_all = skr_all[mask]
+
+    if len(elev_all) == 0:
+        print("❌ No visible samples after filtering")
+        return
+
+    # ==================================================
+    # BINNING
+    # ==================================================
+    bins = np.linspace(0, 90, N_BINS)
+    digitized = np.digitize(elev_all, bins)
+
+    elev_bin = []
+    outage_prob = []
+    counts = []
+
+    for i in range(1, len(bins)):
+        mask_bin = digitized == i
+
+        if not np.any(mask_bin):
+            continue
+
+        skr_bin = skr_all[mask_bin]
+
+        # outage definition
+        outage = skr_bin <= 0
+
+        p_out = np.mean(outage)
+
+        elev_bin.append(np.mean(elev_all[mask_bin]))
         outage_prob.append(p_out)
-        elev_bin.append(np.mean(elev[mask_bin]))
+        counts.append(np.sum(mask_bin))
+
+    elev_bin = np.array(elev_bin)
+    outage_prob = np.array(outage_prob)
+    counts = np.array(counts)
+
+    # ==================================================
+    # DIAGNOSTICS
+    # ==================================================
+    print("\n--- DIAGNOSTICS ---")
+    print("Total samples:", len(elev_all))
+    print("Outage mean:", np.mean(outage_prob))
+
+    # ==================================================
+    # PLOT
+    # ==================================================
+    plt.figure(figsize=(8, 6))
+
+    plt.plot(elev_bin, outage_prob, 'o-', label="Outage probability")
+
+    plt.xlabel("Elevation (deg)")
+    plt.ylabel("Outage Probability")
+    plt.title("Outage vs Elevation")
+
+    plt.ylim(0, 1)
+    plt.grid()
+
+    plt.legend()
+    plt.tight_layout()
+
+    plt.savefig("results/plots/outage_vs_elevation.png", dpi=300)
+    plt.show()
+
 
 # ======================================================
-# PLOT
+# ENTRY POINT
 # ======================================================
-plt.figure()
-
-plt.plot(elev_bin, outage_prob, 'o-')
-
-plt.xlabel("Elevation (deg)")
-plt.ylabel("Outage Probability")
-plt.title("Outage vs Elevation")
-
-plt.ylim(0, 1)
-plt.grid()
-
-plt.show()
+if __name__ == "__main__":
+    main()

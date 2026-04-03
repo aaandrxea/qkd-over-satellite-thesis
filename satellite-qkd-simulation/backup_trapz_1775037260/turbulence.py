@@ -85,7 +85,7 @@ def compute_rytov_variance(
 
         integrand = cn2 * (z + EPS)**(5.0 / 6.0)
 
-        integral = np.trapezoid(integrand, z)
+        integral = np.trapz(integrand, z)
 
         sigma_R2[i] = 1.23 * k**(7.0 / 6.0) * integral
 

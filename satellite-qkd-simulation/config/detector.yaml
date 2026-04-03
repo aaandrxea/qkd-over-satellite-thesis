@@ -1,5 +1,35 @@
-eta_det: 0.6
-dark_rate: 100        # Hz
-gate_time: 1e-9       # s
-afterpulse_prob: 0.02
-dark_rate: 0.000000001
+# ==========================================================
+# DETECTOR MODEL CONFIGURATION
+# ==========================================================
+
+detector:
+
+  # --------------------------------------------------------
+  # BASIC DETECTION
+  # --------------------------------------------------------
+  gate_time: 1.0e-9        # [s]
+  dark_rate: 100           # [Hz]
+  efficiency: 0.6          # detector quantum efficiency
+
+  # --------------------------------------------------------
+  # OPTICAL ERRORS
+  # --------------------------------------------------------
+  e_opt: 0.02              # optical misalignment error
+
+  # --------------------------------------------------------
+  # TEMPORAL EFFECTS
+  # --------------------------------------------------------
+  dead_time: 50e-9         # [s] non-paralyzable
+  afterpulse_prob: 0.01    # probability per detection
+  jitter: 50e-12           # [s]
+
+  # --------------------------------------------------------
+  # INTENSITY NOISE (SOURCE)
+  # --------------------------------------------------------
+  intensity_noise: 0.05    # relative std (5%)
+  noise_model: "lognormal" # ["none", "lognormal", "correlated"]
+
+  # --------------------------------------------------------
+  # CORRELATED NOISE (OPTIONAL)
+  # --------------------------------------------------------
+  correlation_time: 0.01   # [s] only if model = correlated

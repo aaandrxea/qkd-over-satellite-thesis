@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.utils.constants import PI, EPS
+from src.utils.constants import EPS
 from src.utils.io import load_yaml
 
 
@@ -14,163 +14,211 @@ def load_pointing_config(config_path: str = "config/scenario.yaml") -> dict:
 
 
 # ==========================================================
-# BEAM PROPAGATION (Gaussian beam)
+# ANGULAR JITTER (PHYSICAL MODEL)
 # ==========================================================
 
-def beam_waist(tx_diameter: float) -> float:
-    """
-    Waist at transmitter (approximation).
-
-    w0 ≈ D / 2
-    """
-    return tx_diameter / 2.0
-
-
-def beam_radius(wavelength: float, w0: float, z: np.ndarray) -> np.ndarray:
-    """
-    Gaussian beam radius:
-
-    w(z) = w0 * sqrt(1 + (z / z_R)^2)
-
-    where:
-    z_R = π w0^2 / λ
-    """
-
-    z_R = PI * w0**2 / wavelength
-
-    return w0 * np.sqrt(1 + (z / z_R)**2)
-
-
-# ==========================================================
-# POINTING ERROR (2D MODEL)
-# ==========================================================
-
-def pointing_offset(
-    R: np.ndarray,
-    sigma_theta: float,
+def angular_jitter_std(
     wavelength: float,
+    R: np.ndarray,
     elevation: np.ndarray,
-    size=None
+    sigma_platform: float,
+    config=None
 ):
     """
-    Generates radial pointing offset including beam wander.
+    Total angular jitter (rad).
 
-    Angular jitter → 2D Gaussian → radial Rayleigh
+    Includes:
+    - platform pointing jitter
+    - turbulence-induced beam wander
 
-    r = R * θ
+    NOTE:
+    Beam wander is derived from turbulence → correlated effect.
     """
 
     from src.channel.turbulence import beam_wander_std
 
-    R = np.asarray(R)
-    elevation = np.asarray(elevation)
+    sigma_bw = beam_wander_std(
+        wavelength,
+        R,
+        elevation,
+        config=config
+    )
 
-    # ----------------------------
-    # Beam wander
-    # ----------------------------
-    sigma_bw = beam_wander_std(wavelength, R, elevation)
+    return np.sqrt(sigma_platform**2 + sigma_bw**2)
 
-    # ----------------------------
-    # Total jitter
-    # ----------------------------
-    sigma_total = np.sqrt(sigma_theta**2 + sigma_bw**2)
 
-    # ----------------------------
-    # Edge case
-    # ----------------------------
-    if np.all(sigma_total < 1e-12):
-        return np.zeros_like(R)
+# ==========================================================
+# STOCHASTIC OFFSET SAMPLING
+# ==========================================================
 
-    # ----------------------------
-    # 2D Gaussian → Rayleigh
-    # ----------------------------
-    n_samples = 5000
+def sample_pointing_offset(
+    R: np.ndarray,
+    sigma_theta: np.ndarray,
+    static_offset: float = 0.0,
+    rng=None
+):
+    """
+    Sample radial displacement from angular jitter.
 
-    theta_x = np.random.normal(0, sigma_total, size=(n_samples, len(R)))
-    theta_y = np.random.normal(0, sigma_total, size=(n_samples, len(R)))
+    θ_x, θ_y ~ N(0, σ²)
+    r = R * sqrt(θ_x² + θ_y²)
+    """
+
+    if rng is None:
+        rng = np.random
+
+    theta_x = rng.normal(0.0, sigma_theta)
+    theta_y = rng.normal(0.0, sigma_theta)
 
     theta = np.sqrt(theta_x**2 + theta_y**2)
 
-    r = R * theta
-    return r
+    r_dynamic = R * theta
+
+    r_total = np.sqrt(r_dynamic**2 + static_offset**2)
+
+    return r_total
+
 
 # ==========================================================
-# COUPLING EFFICIENCY
+# GAUSSIAN MISALIGNMENT LOSS
 # ==========================================================
 
-def pointing_loss(
+def pointing_coupling(
     r: np.ndarray,
-    w: np.ndarray
+    w_R: np.ndarray
 ):
     """
-    Gaussian beam coupling:
+    Gaussian beam misalignment loss:
 
-    η = exp(-2 r^2 / w^2)
+    η = exp(-2 r² / w²)
     """
 
-    w = np.maximum(w, EPS)
+    w_R = np.maximum(w_R, EPS)
 
-    return np.exp(-2.0 * (r**2) / (w**2))
+    return np.exp(-2.0 * (r / w_R)**2)
 
 
 # ==========================================================
-# MAIN INTERFACE
+# TEMPORAL CORRELATION (OPTIONAL, ADVANCED)
+# ==========================================================
+
+def apply_temporal_correlation(
+    sigma_theta: np.ndarray,
+    correlation_time: float,
+    dt: float,
+    rng=None
+):
+    """
+    Apply Ornstein-Uhlenbeck temporal correlation to angular jitter.
+
+    This models mechanical inertia / control loop behavior.
+    """
+
+    if correlation_time is None or correlation_time <= 0:
+        return sigma_theta
+
+    if rng is None:
+        rng = np.random
+
+    alpha = np.exp(-dt / max(correlation_time, EPS))
+
+    correlated = np.zeros_like(sigma_theta)
+
+    for i in range(len(sigma_theta)):
+        if i == 0:
+            correlated[i] = sigma_theta[i]
+        else:
+            noise = rng.normal(0.0, sigma_theta[i])
+            correlated[i] = alpha * correlated[i-1] + np.sqrt(1 - alpha**2) * noise
+
+    return np.abs(correlated)
+
+
+# ==========================================================
+# MAIN POINTING MODEL
 # ==========================================================
 
 def pointing_fading(
     R,
     wavelength,
     elevation,
-    tx_diameter,
-    config=None
+    w_R,                       # ← beam radius from link_budget
+    config=None,
+    dt=None,
+    rng=None
 ):
     """
-    Full pointing loss model.
+    Full physically consistent pointing model.
 
-    Includes:
-    - diffraction-limited beam propagation
-    - beam wander (turbulence)
-    - 2D jitter
-    - Gaussian coupling
+    Parameters
+    ----------
+    R : distance [m]
+    wavelength : optical wavelength [m]
+    elevation : angle [rad]
+    w_R : beam radius at receiver [m]
+
+    config:
+        sigma_theta : platform jitter [rad]
+        static_offset : static misalignment [m]
+        correlation_time : optional temporal correlation [s]
+
+    dt : timestep [s] (required for correlation)
+
+    Returns
+    -------
+    eta_point : coupling efficiency
     """
-
-    import numpy as np
 
     if config is None:
         config = load_pointing_config()
 
-    # ----------------------------
-    # Parameters
-    # ----------------------------
-    sigma_theta = float(config.get("sigma_theta", 3e-7))
+    sigma_platform = float(config.get("sigma_theta", 1e-6))
     static_offset = float(config.get("static_offset", 0.0))
+    correlation_time = config.get("correlation_time", None)
 
     R = np.asarray(R)
     elevation = np.asarray(elevation)
+    w_R = np.asarray(w_R)
 
-    # ----------------------------
-    # Beam propagation
-    # ----------------------------
-    w0 = tx_diameter / 2.0
-    z_R = np.pi * w0**2 / wavelength
-    w_z = w0 * np.sqrt(1 + (R / z_R)**2)
+    # ======================================================
+    # TOTAL ANGULAR JITTER
+    # ======================================================
 
-    # ----------------------------
-    # Pointing jitter (WITH beam wander)
-    # ----------------------------
-    r_jitter = pointing_offset(
-        R,
-        sigma_theta,
-        wavelength,
-        elevation
+    sigma_theta = angular_jitter_std(
+        wavelength=wavelength,
+        R=R,
+        elevation=elevation,
+        sigma_platform=sigma_platform,
+        config=config.get("turbulence", {})
     )
 
-    # r_jitter ora è (n_samples, N)
+    # ======================================================
+    # TEMPORAL CORRELATION (OPTIONAL)
+    # ======================================================
 
-    r_total = np.sqrt(r_jitter**2 + static_offset**2)
+    if dt is not None:
+        sigma_theta = apply_temporal_correlation(
+            sigma_theta,
+            correlation_time=correlation_time,
+            dt=dt,
+            rng=rng
+        )
 
-    eta_samples = np.exp(-2 * (r_total / w_z)**2)
+    # ======================================================
+    # SAMPLE OFFSET
+    # ======================================================
 
-    # MEDIA CORRETTA
-    eta_point = np.mean(eta_samples, axis=0)
-    return eta_point
+    r = sample_pointing_offset(
+        R=R,
+        sigma_theta=sigma_theta,
+        static_offset=static_offset,
+        rng=rng
+    )
+
+    # ======================================================
+    # COUPLING LOSS
+    # ======================================================
+
+    eta_point = pointing_coupling(r, w_R)
+
+    return np.clip(eta_point, 0.0, 1.0)

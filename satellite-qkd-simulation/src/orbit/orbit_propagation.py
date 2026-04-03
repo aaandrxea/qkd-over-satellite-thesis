@@ -187,7 +187,49 @@ def compute_elevation(r_sat, r_gs):
     elevation = np.arcsin(cos_z)
 
     return elevation
+# ==========================================================
+# AZIMUTH (PHYSICAL, LOCAL FRAME)
+# ==========================================================
 
+def compute_azimuth(r_sat, r_gs):
+    """
+    Compute azimuth angle using local tangent plane.
+
+    Azimuth = angle from North towards East.
+    """
+
+    los = r_sat - r_gs
+
+    # normalize ground station position → zenith
+    zenith = r_gs / np.linalg.norm(r_gs, axis=0)
+
+    # define local East and North vectors
+    z_axis = np.array([[0.0], [0.0], [1.0]])
+
+    east = np.cross(z_axis.T, zenith.T).T
+    east_norm = np.linalg.norm(east, axis=0)
+    east[:, east_norm > 0] /= east_norm[east_norm > 0]
+
+    north = np.cross(zenith.T, east.T).T
+
+    # project LOS onto horizontal plane
+    los_norm = np.linalg.norm(los, axis=0)
+    los_unit = los / np.maximum(los_norm, 1e-15)
+
+    los_h = los_unit - np.sum(los_unit * zenith, axis=0) * zenith
+    los_h_norm = np.linalg.norm(los_h, axis=0)
+    los_h[:, los_h_norm > 0] /= los_h_norm[los_h_norm > 0]
+
+    # compute azimuth
+    cos_az = np.sum(los_h * north, axis=0)
+    sin_az = np.sum(los_h * east, axis=0)
+
+    azimuth = np.arctan2(sin_az, cos_az)
+
+    # normalize [0, 2π]
+    azimuth = np.mod(azimuth, 2 * np.pi)
+
+    return azimuth
 
 # ==========================================================
 # FULL ORBIT PIPELINE (NO APPROXIMATION)
@@ -228,10 +270,14 @@ def propagate_orbit_full(satellite, ground_station, times):
     # ----------------------------
     elevation = compute_elevation(r_sat, r_gs)
 
+    # Azimuth (NEW)
+    azimuth = compute_azimuth(r_sat, r_gs)
+
     return {
-        "r_sat": r_sat,
-        "r_gs": r_gs,
-        "los": los,
-        "distance": R,
-        "elevation": elevation
+    "r_sat": r_sat,
+    "r_gs": r_gs,
+    "los": los,
+    "distance": R,
+    "elevation": elevation,
+    "azimuth": azimuth   
     }

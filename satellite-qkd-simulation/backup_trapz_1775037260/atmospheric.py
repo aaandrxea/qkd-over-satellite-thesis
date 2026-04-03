@@ -124,7 +124,7 @@ def integrate_extinction(
 
         alpha = extinction_profile(h, wavelength, config)
 
-        integral = np.trapezoid(alpha, z)
+        integral = np.trapz(alpha, z)
 
         tau[i] = integral
 
@@ -134,8 +134,6 @@ def integrate_extinction(
 # ==========================================================
 # MAIN ATMOSPHERIC TRANSMITTANCE
 # ==========================================================
-import numpy as np
-
 
 def atmospheric_transmittance(
     R,
@@ -144,23 +142,24 @@ def atmospheric_transmittance(
     config=None
 ):
     """
-    Physically correct atmospheric transmission.
+    Compute atmospheric transmission.
 
-    Uses optical depth model instead of volumetric extinction.
+    η_atm = exp(-τ)
     """
-
-    elevation = np.asarray(elevation)
-
-    # avoid singularity
-    sin_el = np.maximum(np.sin(elevation), 0.1)
 
     if config is None:
         config = {}
 
-    # total optical depth (Rayleigh + aerosol)
-    tau = config.get("optical_depth", 0.1)
+    R = np.asarray(R)
+    elevation = np.asarray(elevation)
 
-    # air mass model
-    eta = np.exp(-tau / sin_el)
+    tau = integrate_extinction(
+        R,
+        elevation,
+        wavelength,
+        config
+    )
+
+    eta = np.exp(-tau)
 
     return np.clip(eta, 0.0, 1.0)

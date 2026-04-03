@@ -1,89 +1,142 @@
 import numpy as np
 
+EPS = 1e-15
+
 
 # ==========================================================
-# MARKOV CLOUD MODEL
+# MARKOV STATE (TEMPORAL CORRELATION)
 # ==========================================================
 
-def simulate_cloud_state(N, p_clear_to_cloud=0.01, p_cloud_to_clear=0.1):
-    """
-    Generate cloud state with temporal correlation.
+def generate_cloud_state(n_steps, p_clear, tau_corr, dt, rng):
+    state = np.zeros(n_steps)
 
-    0 = clear
-    1 = cloudy
-    """
+    p_switch = dt / max(tau_corr, EPS)
 
-    state = np.zeros(N, dtype=int)
-
-    i = 0
-    current = 0  # start in clear state
-
-    while i < N:
-        if current == 0:
-            duration = np.random.geometric(p_clear_to_cloud)
+    for i in range(1, n_steps):
+        if rng.random() < p_switch:
+            state[i] = 1 - state[i-1]
         else:
-            duration = np.random.geometric(p_cloud_to_clear)
+            state[i] = state[i-1]
 
-        end = min(i + duration, N)
-        state[i:end] = current
-
-        i = end
-        current = 1 - current
+    # enforce clear probability
+    mask = rng.random(n_steps) < p_clear
+    state[mask] = 0
 
     return state
 
+
 # ==========================================================
-# CLOUD ATTENUATION
+# NORMAL CLOUD LOSS
 # ==========================================================
 
-def cloud_attenuation(state, min_loss_db=20, max_loss_db=80):
-    """
-    Convert cloud state → transmission factor.
-    """
-
-    N = len(state)
-    eta = np.ones(N)
-
-    # random attenuation for cloudy points
-    cloudy = state == 1
-
-    loss_db = np.random.uniform(min_loss_db, max_loss_db, size=N)
-
-    eta[cloudy] = 10 ** (-loss_db[cloudy] / 10)
-
-    return eta
+def sample_normal_cloud(min_db, max_db, size, rng):
+    return rng.uniform(min_db, max_db, size=size)
 
 
 # ==========================================================
-# MAIN INTERFACE
+# EXTREME EVENTS (HEAVY TAIL)
 # ==========================================================
 
-def cloud_transmittance(N, config=None):
+def sample_extreme_cloud(size, config, rng):
     """
-    Returns eta_cloud(t)
+    Rare heavy attenuation events.
     """
+
+    p_extreme = config.get("p_extreme", 0.01)
+
+    extreme_mask = rng.random(size) < p_extreme
+
+    loss = np.zeros(size)
+
+    if np.any(extreme_mask):
+        # lognormal heavy tail
+        mean = config.get("extreme_mean_db", 15.0)
+        sigma = config.get("extreme_sigma", 0.7)
+
+        loss_ext = rng.lognormal(mean=np.log(mean), sigma=sigma, size=np.sum(extreme_mask))
+
+        loss[extreme_mask] = loss_ext
+
+    return loss, extreme_mask
+
+
+# ==========================================================
+# MAIN MODEL
+# ==========================================================
+
+def cloud_attenuation_2d(
+    n_steps,
+    elevation,
+    dt,
+    config=None,
+    rng=None
+):
+    if rng is None:
+        rng = np.random
 
     if config is None:
         config = {}
 
-    cloud_cfg = config.get("clouds", {})
+    # ----------------------------
+    # PARAMETERS
+    # ----------------------------
 
-    p_clear_to_cloud = float(cloud_cfg.get("p_clear_to_cloud", 0.01))
-    p_cloud_to_clear = float(cloud_cfg.get("p_cloud_to_clear", 0.1))
+    p_clear = config.get("p_clear", 0.7)
+    tau_corr = config.get("correlation_time", 20.0)
 
-    min_loss_db = float(cloud_cfg.get("min_loss_db", 20))
-    max_loss_db = float(cloud_cfg.get("max_loss_db", 80))
+    min_db = config.get("min_loss_db", 1.0)
+    max_db = config.get("max_loss_db", 8.0)
 
-    state = simulate_cloud_state(
-        N,
-        p_clear_to_cloud,
-        p_cloud_to_clear
+    efficiency = config.get("efficiency", 1.0)
+
+    elevation = np.asarray(elevation)
+    sin_el = np.maximum(np.sin(elevation), 0.2)
+
+    # ----------------------------
+    # STATE
+    # ----------------------------
+
+    cloud_state = generate_cloud_state(
+        n_steps, p_clear, tau_corr, dt, rng
     )
 
-    eta = cloud_attenuation(
-        state,
-        min_loss_db,
-        max_loss_db
-    )
+    # ----------------------------
+    # BASE LOSS
+    # ----------------------------
 
-    return eta, state
+    loss_db = sample_normal_cloud(min_db, max_db, n_steps, rng)
+
+    # ----------------------------
+    # EXTREME EVENTS (RARE)
+    # ----------------------------
+
+    extreme_loss, extreme_mask = sample_extreme_cloud(n_steps, config, rng)
+
+    # combine
+    loss_db = np.where(extreme_mask, extreme_loss, loss_db)
+
+    # ----------------------------
+    # ELEVATION SCALING (MILD)
+    # ----------------------------
+
+    slant = 1.0 / sin_el
+    loss_db *= (1 + 0.2 * (slant - 1))
+
+    # hard cap (VERY IMPORTANT)
+    max_cap = config.get("hard_max_db", 25.0)
+    loss_db = np.clip(loss_db, 0.0, max_cap)
+
+    # ----------------------------
+    # APPLY ONLY WHEN CLOUD PRESENT
+    # ----------------------------
+
+    eta_cloud = np.ones(n_steps)
+
+    mask = cloud_state > 0.5
+
+    eta_cloud[mask] = 10 ** (-loss_db[mask] / 10.0)
+
+    # efficiency scaling
+    eta_cloud *= efficiency
+
+    return cloud_state, np.clip(eta_cloud, 0.0, 1.0)

@@ -1,179 +1,147 @@
 import numpy as np
+from src.channel.solar import solar_position, sun_los_angle
+from src.utils.constants import H, C, EPS
+
 
 # ==========================================================
-# COSTANTI
+# SKY RADIANCE MODEL (SEMPLIFIED BUT PHYSICAL)
 # ==========================================================
+import numpy as np
 
-h = 6.626e-34
-c = 3e8
-
-def background_photon_rate(
+def sky_radiance(
     wavelength,
-    rx_diameter,
-    fov,
-    bandwidth,
-    elevation_rad,
-    condition="day",
+    elevation,
+    sun_angle=None,
+    sun_elevation=None,
     config=None
 ):
-    elevation_rad = np.asarray(elevation_rad)
+    """
+    Fully vectorized sky radiance model (no external dependencies).
+    """
 
-    if config is None:
-        config = {}
+    elevation = np.asarray(elevation)
 
-    bg_cfg = config.get("background", {})
+    if sun_elevation is None:
+        sun_elevation = np.zeros_like(elevation)
+    else:
+        sun_elevation = np.asarray(sun_elevation)
 
-    g = float(bg_cfg.get("mie_g", 0.7))
-    albedo = float(bg_cfg.get("albedo", 0.3))
-    sigma = float(bg_cfg.get("fluct_sigma", 0.25))
-    angstrom = float(bg_cfg.get("angstrom", 1.3))
+    if sun_angle is None:
+        sun_angle = np.zeros_like(elevation)
+    else:
+        sun_angle = np.asarray(sun_angle)
 
-    # COSTANTI
-    h = 6.626e-34
-    c = 3e8
+    # ----------------------------
+    # MASKS
+    # ----------------------------
+    day_mask = sun_elevation > 0
+    night_mask = ~day_mask
 
-    # GEOMETRIA
-    A = np.pi * (rx_diameter / 2)**2
+    # ----------------------------
+    # OUTPUT
+    # ----------------------------
+    L = np.zeros_like(elevation, dtype=float)
+
+    # ----------------------------
+    # NIGHT SKY
+    # ----------------------------
+    sin_el = np.maximum(np.sin(elevation[night_mask]), 0.1)
+    L[night_mask] = 1e-6 / sin_el
+    # ----------------------------
+    # DAY SKY
+    # ----------------------------
+    if np.any(day_mask):
+
+        # forward scattering model
+        L_day = 1e-6 * np.exp(-sun_angle[day_mask])
+
+        # airmass scaling
+        sin_el = np.maximum(np.sin(elevation[night_mask]), 0.1)
+        L[night_mask] = 1e-6 / sin_el
+        L[day_mask] = L_day
+
+    return L
+# ==========================================================
+# PHOTON CONVERSION
+# ==========================================================
+
+def photon_energy(wavelength):
+    return H * C / wavelength
+
+
+# ==========================================================
+# MAIN BACKGROUND MODEL
+# ==========================================================
+
+
+
+h = 6.62607015e-34
+c = 299792458.0
+
+
+def compute_background(
+    wavelength,
+    elevation,
+    rx_diameter,
+    beam_radius,
+    sun_angle=None,
+    sun_elevation=None,
+    config=None
+):
+    """
+    ETH-grade background model with FOV and spectral bandwidth.
+    """
+
+    elevation = np.asarray(elevation)
+
+    # =========================
+    # CONFIG
+    # =========================
+    fov = config.get("fov_rad", 100e-6)          # radians
+    delta_lambda = config.get("bandwidth_nm", 1.0)  # nm
+    T_opt = config.get("optical_efficiency", 0.5)
+    eta_det = config.get("detector_efficiency", 0.6)
+
+    # =========================
+    # SKY RADIANCE
+    # =========================
+    L = sky_radiance(
+        wavelength,
+        elevation,
+        sun_angle=sun_angle,
+        sun_elevation=sun_elevation,
+        config=config
+    )  # W / (m^2 sr nm)
+
+    # =========================
+    # RECEIVER AREA
+    # =========================
+    A_rx = np.pi * (rx_diameter / 2.0)**2
+
+    # =========================
+    # SOLID ANGLE (FOV)
+    # =========================
     Omega = np.pi * fov**2
 
-    # SOLAR GEOMETRY
-    theta_z = np.pi / 2 - elevation_rad
-    cos_theta = np.clip(np.cos(theta_z), 0.0, 1.0)
+    # =========================
+    # POWER COLLECTED
+    # =========================
+    P_bg = L * A_rx * Omega * delta_lambda * T_opt
 
-    # RAYLEIGH
-    wl_nm = wavelength * 1e9
-    L_ray = 5e-3 * (800 / wl_nm)**4 * cos_theta
+    # =========================
+    # PHOTON ENERGY
+    # =========================
+    lambda_m = wavelength
+    E_ph = h * c / lambda_m
 
-    # MIE
-    wl_um = wavelength * 1e6
-    phase = (1 - g**2) / (1 + g**2 - 2*g*cos_theta)**1.5
-    L_mie = 1e-2 * (wl_um / 0.55)**(-angstrom) * phase
+    # =========================
+    # PHOTON RATE
+    # =========================
+    N_bg = P_bg / E_ph
 
-    # ALBEDO
-    sin_el = np.sin(elevation_rad)
-    sin_el = np.clip(sin_el, 0.05, 1.0)
-    weight = (1 - sin_el)**2
-    L_alb = albedo * 5e-3 * weight
+    # =========================
+    # DETECTOR EFFICIENCY
+    # =========================
+    N_bg *= eta_det
 
-    # TOTAL
-    if condition == "night":
-        L = np.full_like(elevation_rad, 1e-6)
-    else:
-        L = L_ray + L_mie + L_alb
-
-    # AIR MASS
-    airmass = 1.0 / sin_el
-    L = L * airmass
-
-    # POWER → PHOTONS
-    P = L * A * Omega * bandwidth
-    E_ph = h * c / wavelength
-    bg_rate = P / E_ph
-
-    # FLUTTUAZIONI
-    X = np.random.normal(
-        loc=-0.5 * sigma**2,
-        scale=sigma,
-        size=bg_rate.shape
-    )
-    bg_rate = bg_rate * np.exp(X)
-
-    return np.clip(bg_rate, 0.0, None)
-# ==========================================================
-# SOLAR GEOMETRY
-# ==========================================================
-
-def solar_zenith_angle(elevation_rad):
-    return np.pi / 2 - elevation_rad
-
-
-# ==========================================================
-# HENYEY-GREENSTEIN PHASE FUNCTION (MIE)
-# ==========================================================
-
-def hg_phase_function(theta, g=0.7):
-    """
-    Anisotropic scattering phase function.
-    """
-
-    cos_theta = np.cos(theta)
-
-    return (1 - g**2) / (1 + g**2 - 2 * g * cos_theta)**1.5
-
-
-# ==========================================================
-# RAYLEIGH COMPONENT
-# ==========================================================
-
-def rayleigh_radiance(wavelength, elevation_rad):
-    wl_nm = wavelength * 1e9
-
-    theta_z = solar_zenith_angle(elevation_rad)
-    cos_theta = np.clip(np.cos(theta_z), 0.0, 1.0)
-
-    # λ^-4
-    L0 = 5e-3 * (800 / wl_nm)**4
-
-    return L0 * cos_theta
-
-
-# ==========================================================
-# MIE (AEROSOL) COMPONENT
-# ==========================================================
-
-def mie_radiance(wavelength, elevation_rad, g=0.7):
-    wl_um = wavelength * 1e6
-
-    theta_z = solar_zenith_angle(elevation_rad)
-
-    # scattering angle approx (sole → linea di vista)
-    theta_scat = theta_z
-
-    phase = hg_phase_function(theta_scat, g=g)
-
-    # Ångström scaling
-    alpha = 1.3
-    L0 = 1e-2 * (wl_um / 0.55)**(-alpha)
-
-    return L0 * phase
-
-
-# ==========================================================
-# EARTH ALBEDO COMPONENT
-# ==========================================================
-
-def albedo_radiance(elevation_rad, albedo=0.3):
-    """
-    Ground-reflected light entering FOV.
-    Dominant at low elevation.
-    """
-
-    sin_el = np.sin(elevation_rad)
-    sin_el = np.clip(sin_el, 0.05, 1.0)
-
-    # più forte a basse elevazioni
-    weight = (1 - sin_el)**2
-
-    L0 = 5e-3
-
-    return albedo * L0 * weight
-
-
-# ==========================================================
-# TOTAL SKY RADIANCE
-# ==========================================================
-
-def sky_radiance_advanced(
-    wavelength,
-    elevation_rad,
-    condition="day"
-):
-    elevation_rad = np.asarray(elevation_rad)
-
-    if condition == "night":
-        return np.full_like(elevation_rad, 1e-6)
-
-    L_ray = rayleigh_radiance(wavelength, elevation_rad)
-    L_mie = mie_radiance(wavelength, elevation_rad)
-    L_alb = albedo_radiance(elevation_rad)
-
+    return N_bg
